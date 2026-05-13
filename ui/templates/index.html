@@ -21,7 +21,8 @@
       <button class="btn-icon" id="btnOpenVideo"     title="Live Camera">📷</button>
       <button class="btn-icon" id="btnOpenWorkspace" title="Workspace">📁</button>
       <button class="btn-icon" id="btnOpenTerminal"  title="Terminal">⌨</button>
-      <button class="btn-icon" id="btnOpenMemory"    title="Memory">🧠</button>
+      <button class="btn-icon" id="btnOpenMemory"    title="Memory &amp; Knowledge">🧠</button>
+      <button class="btn-icon" id="btnOpenPlanner"   title="Autonomous Planner">⚡</button>
       <button class="btn-icon" id="btnOpenScheduler" title="Scheduler">📅</button>
       <button class="btn-icon" id="btnOpenSettings"  title="Settings / Model">⚙</button>
       <button class="btn-icon" id="btnTheme"         title="Toggle Theme">🌙</button>
@@ -85,13 +86,21 @@
 <!-- ═══════════════════════ MEMORY POPUP ════════════════════════════════ -->
 <div id="memoryPopup" class="popup hidden memory-popup">
   <div class="popup-header" id="memoryPopupHeader">
-    <span class="popup-title">🧠 Memory</span>
+    <span class="popup-title">🧠 Memory &amp; Knowledge</span>
     <div class="popup-controls">
       <button class="btn-sm" id="btnMemRefresh">↻</button>
       <button class="btn-icon sm" id="btnCloseMemory">✕</button>
     </div>
   </div>
-  <div class="memory-body">
+
+  <!-- Tabs -->
+  <div class="mem-tabs">
+    <button class="mem-tab active" data-tab="memory">Memory</button>
+    <button class="mem-tab"        data-tab="kb">Knowledge Base</button>
+  </div>
+
+  <!-- ── Memory tab ── -->
+  <div class="memory-body" id="memTabMemory">
     <div class="memory-search-row">
       <input id="memSearchInput" type="text" placeholder="Search memories…" />
       <button class="btn-sm" id="btnMemSearch">Search</button>
@@ -100,8 +109,6 @@
       <input id="memAddInput" type="text" placeholder="Save a fact or note…" />
       <button class="btn-sm accent" id="btnMemAdd">+ Save</button>
     </div>
-
-    <!-- Doc ingest -->
     <div class="mem-ingest-row">
       <label class="btn-sm upload-label">
         📄 Ingest Document
@@ -111,8 +118,26 @@
       <label class="mem-check"><input type="checkbox" id="ingestToMemory" checked /> Memory</label>
       <label class="mem-check"><input type="checkbox" id="ingestToWorkspace" /> Workspace</label>
     </div>
-
     <div class="memory-list" id="memoryList"></div>
+  </div>
+
+  <!-- ── Knowledge Base tab ── -->
+  <div class="memory-body hidden" id="memTabKB">
+    <div class="memory-search-row">
+      <input id="kbSearchInput" type="text" placeholder="Search knowledge base…" />
+      <button class="btn-sm" id="btnKBSearch">Search</button>
+    </div>
+    <div class="mem-ingest-row">
+      <label class="btn-sm upload-label">
+        📚 Ingest to KB
+        <input type="file" id="kbIngestInput" style="display:none"
+               accept=".pdf,.docx,.doc,.xlsx,.txt,.md,.py,.js,.json" />
+      </label>
+      <input id="kbChunkSize" type="number" value="800" min="200" max="4000"
+             style="width:70px" title="Chunk size (chars)" />
+      <span style="font-size:11px;color:var(--text2)">chars/chunk</span>
+    </div>
+    <div class="memory-list" id="kbList"></div>
   </div>
 </div>
 
@@ -243,6 +268,7 @@
         <option value="ml">📊 ML</option>
         <option value="vision">👁 Vision</option>
         <option value="project">🏗 Project</option>
+        <option value="planner">⚡ Planner</option>
       </select>
       <button class="btn-icon sm" id="btnExportChat" title="Export chat">⬇</button>
       <button class="btn-icon sm" id="btnWebSearch"  title="Web search">🌐</button>
@@ -324,6 +350,30 @@
   <div class="video-actions">
     <button class="btn-sm" id="btnLiveSnap">📸 Snapshot + Analyze</button>
     <input id="liveSnapPrompt" type="text" placeholder="Analysis prompt…" />
+  </div>
+</div>
+
+<!-- ═══════════════════════ PLANNER POPUP ════════════════════════ -->
+<div id="plannerPopup" class="popup hidden planner-popup">
+  <div class="popup-header" id="plannerPopupHeader">
+    <span class="popup-title">⚡ Autonomous Planner</span>
+    <div class="popup-controls">
+      <button class="btn-icon sm" id="btnClosePlanner">✕</button>
+    </div>
+  </div>
+
+  <div class="planner-body">
+    <!-- Goal input -->
+    <div class="planner-goal-row">
+      <textarea id="plannerGoal" placeholder="Describe a high-level goal… e.g. 'Research quantum computing, write a Python simulation, and produce a summary report'" rows="3"></textarea>
+      <button class="btn-sm accent" id="btnRunPlanner">⚡ Plan &amp; Execute</button>
+    </div>
+
+    <!-- Plan visualization — populated by JS -->
+    <div id="plannerPlan" class="planner-plan hidden"></div>
+
+    <!-- Execution log -->
+    <div id="plannerLog" class="planner-log hidden"></div>
   </div>
 </div>
 

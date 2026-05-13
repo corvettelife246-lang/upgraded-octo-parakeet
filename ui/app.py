@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from agents.admin_agent import AdminAgent
 from agents.code_agent import CodeAgent
 from agents.ml_agent import MLAgent
+from agents.planner_agent import PlannerAgent as AutonomousPlannerAgent
 from agents.project_agent import ProjectAgent
 from agents.reasoning_agent import ReasoningAgent
 from agents.research_agent import ResearchAgent
@@ -97,6 +98,7 @@ camera = Camera()
 image_proc = ImageProcessor()
 
 # Agent registry
+_planner = AutonomousPlannerAgent(agent_manager.llm)
 _agents = {
     "admin":    AdminAgent(agent_manager.llm),
     "code":     CodeAgent(agent_manager.llm),
@@ -105,7 +107,10 @@ _agents = {
     "ml":       MLAgent(agent_manager.llm),
     "vision":   VisionAgent(agent_manager.llm),
     "project":  ProjectAgent(agent_manager.llm),
+    "planner":  _planner,
 }
+# Allow planner to delegate to all other agents
+_planner.set_agents(_agents)
 
 # WebSocket connection registry
 _ws_connections: dict[str, WebSocket] = {}
@@ -790,6 +795,104 @@ async def git_branch_ep(project: str, req: GitBranchRequest):
 async def git_remote_ep(project: str, req: GitRemoteRequest):
     from core.git_ops import git_remote_add
     return await git_remote_add(project, name=req.name, url=req.url)
+
+
+# ------------------------------------------------------------------
+# Autonomous Planner WebSocket
+# ------------------------------------------------------------------
+@app.websocket("/ws/planner")
+async def websocket_planner(ws: WebSocket):
+    """
+    Autonomous goal planner — decomposes a goal into agent tasks and executes them.
+    Client sends: {"goal": "Build a REST API with authentication"}
+    Server streams: plan_start → planning → plan_ready → task_start → task_done → plan_complete
+    """
+    await ws.accept()
+    try:
+        raw  = await ws.receive_text()
+        data = json.loads(raw)
+        goal = data.get("goal", "").strip()
+        if not goal:
+            await ws.send_text(json.dumps({"type": "error", "message": "goal required"}))
+            return
+
+        planner = _agents.get("planner")
+        if not planner:
+            await ws.send_text(json.dumps({"type": "error", "message": "planner not registered"}))
+            return
+
+        async for event in planner.execute_stream(goal):
+            await ws.send_text(json.dumps(event, default=str))
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.exception("Planner WS error")
+        try:
+            await ws.send_text(json.dumps({"type": "error", "message": str(exc)}))
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------------
+# Knowledge Base (RAG) API
+# ------------------------------------------------------------------
+class KBAddRequest(BaseModel):
+    text: str
+    title: str = ""
+    source: str = ""
+    tags: list[str] = []
+    chunk_size: int = 0
+
+
+@app.post("/api/kb")
+async def kb_add(req: KBAddRequest):
+    from core.knowledge_base import get_kb
+    ids = get_kb().add(
+        req.text, title=req.title, source=req.source,
+        tags=req.tags, chunk_size=req.chunk_size or 0,
+    )
+    return {"ids": ids, "count": len(ids)}
+
+
+@app.get("/api/kb")
+async def kb_list():
+    from core.knowledge_base import get_kb
+    kb = get_kb()
+    return {"entries": kb.list_all(), "count": kb.count()}
+
+
+@app.get("/api/kb/search")
+async def kb_search(q: str, top_k: int = 5):
+    from core.knowledge_base import get_kb
+    return {"results": await get_kb().search(q, top_k=top_k)}
+
+
+@app.delete("/api/kb/{entry_id}")
+async def kb_delete(entry_id: str):
+    from core.knowledge_base import get_kb
+    ok = get_kb().delete(entry_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"ok": True}
+
+
+@app.post("/api/kb/ingest")
+async def kb_ingest(
+    file: UploadFile = File(...),
+    chunk_size: int = Form(800),
+    title: str = Form(""),
+):
+    from core.document_reader import read_document_bytes
+    from core.knowledge_base import get_kb
+    raw  = await file.read()
+    text = await read_document_bytes(raw, filename=file.filename or "")
+    doc_title = title or file.filename or "document"
+    ids  = get_kb().add(
+        text, title=doc_title, source="upload",
+        tags=["document"], chunk_size=chunk_size,
+    )
+    return {"filename": file.filename, "chars": len(text), "chunks": len(ids)}
 
 
 # ------------------------------------------------------------------

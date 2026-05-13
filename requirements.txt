@@ -35,8 +35,9 @@ pandas>=2.2.2
 matplotlib>=3.9.0
 seaborn>=0.13.2
 
-# ─── Memory ─────────────────────────────────────────────────────
+# ─── Memory & Knowledge Base ────────────────────────────────────
 sentence-transformers>=3.0.0
+faiss-cpu>=1.8.0               # optional — FAISS vector index for RAG KB
 
 # ─── Web search ──────────────────────────────────────────────────
 duckduckgo-search>=6.1.0

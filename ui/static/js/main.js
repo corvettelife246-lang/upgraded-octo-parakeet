@@ -634,6 +634,29 @@ function init() {
     }
   };
 
+  // Planner popup
+  $('btnOpenPlanner').onclick = () => $('plannerPopup').classList.toggle('hidden');
+  $('btnClosePlanner').onclick = () => $('plannerPopup').classList.add('hidden');
+  $('btnRunPlanner').onclick  = runPlanner;
+
+  // Memory / KB tabs
+  document.querySelectorAll('.mem-tab').forEach(tab => {
+    tab.onclick = () => {
+      document.querySelectorAll('.mem-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const which = tab.dataset.tab;
+      $('memTabMemory').classList.toggle('hidden', which !== 'memory');
+      $('memTabKB').classList.toggle('hidden', which !== 'kb');
+      if (which === 'kb') loadKBEntries();
+    };
+  });
+  $('btnKBSearch').onclick = () => loadKBEntries($('kbSearchInput').value.trim());
+  $('kbSearchInput').addEventListener('keydown', e => { if(e.key==='Enter') loadKBEntries($('kbSearchInput').value.trim()); });
+  $('kbIngestInput').onchange = async e => {
+    for (const f of e.target.files) await ingestToKB(f);
+    e.target.value = '';
+  };
+
   // Scheduler popup
   $('btnOpenScheduler').onclick = () => {
     $('schedulerPopup').classList.toggle('hidden');
@@ -664,6 +687,7 @@ function init() {
   makeDraggable($('terminalPopup'),     $('terminalPopupHeader'));
   makeDraggable($('memoryPopup'),       $('memoryPopupHeader'));
   makeDraggable($('schedulerPopup'),    $('schedulerPopupHeader'));
+  makeDraggable($('plannerPopup'),      $('plannerPopupHeader'));
 
   // Load backend info into dashboard stats
   loadBackendInfo();
@@ -1363,3 +1387,174 @@ async function gitPush() {
 
 window.toggleSchedulerJob = toggleSchedulerJob;
 window.removeSchedulerJob = removeSchedulerJob;
+
+// ─── Autonomous Planner ───────────────────────────────────────────────────────
+let _wsPlanner = null;
+
+function runPlanner() {
+  const goal = $('plannerGoal').value.trim();
+  if (!goal) return;
+
+  const plan = $('plannerPlan');
+  const log  = $('plannerLog');
+  plan.innerHTML = '';
+  log.innerHTML  = '';
+  plan.classList.add('hidden');
+  log.classList.remove('hidden');
+
+  if (_wsPlanner) { try { _wsPlanner.close(); } catch {} }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  _wsPlanner  = new WebSocket(`${proto}://${location.host}/ws/planner`);
+
+  _wsPlanner.onopen = () => {
+    _wsPlanner.send(JSON.stringify({ goal }));
+    appendPlanLog('planning', `Goal: ${goal}`);
+  };
+
+  _wsPlanner.onmessage = ({ data }) => {
+    const ev = JSON.parse(data);
+    switch (ev.type) {
+      case 'planning':
+        appendPlanLog('planning', ev.message);
+        break;
+
+      case 'plan_ready':
+        appendPlanLog('done', `Plan ready — ${ev.task_count} steps`);
+        plan.classList.remove('hidden');
+        (ev.plan || []).forEach(task => {
+          const card = document.createElement('div');
+          card.id = `plan-task-${task.id}`;
+          card.className = 'plan-task-card';
+          card.innerHTML = `
+            <div class="plan-task-header">
+              <div class="plan-task-num">${task.id}</div>
+              <div class="plan-task-title">${task.title}</div>
+              <div class="plan-agent-badge">${task.agent}</div>
+              <div class="plan-task-status pending" id="plan-status-${task.id}">pending</div>
+            </div>`;
+          plan.appendChild(card);
+        });
+        break;
+
+      case 'task_start': {
+        const statusEl = $(`plan-status-${ev.task_id}`);
+        if (statusEl) { statusEl.textContent = '⟳ running'; statusEl.className = 'plan-task-status running'; }
+        appendPlanLog('planning', `▶ Step ${ev.task_id}: ${ev.title} [${ev.agent}]`);
+        break;
+      }
+
+      case 'task_done': {
+        const card     = $(`plan-task-${ev.task_id}`);
+        const statusEl = $(`plan-status-${ev.task_id}`);
+        if (statusEl) { statusEl.textContent = '✓ done'; statusEl.className = 'plan-task-status done'; }
+        if (card) {
+          const result = document.createElement('div');
+          result.className = 'plan-task-result';
+          result.textContent = ev.result + (ev.truncated ? '\n[truncated…]' : '');
+          card.appendChild(result);
+        }
+        appendPlanLog('done', `✓ Step ${ev.task_id} complete`);
+        break;
+      }
+
+      case 'task_error': {
+        const statusEl = $(`plan-status-${ev.task_id}`);
+        if (statusEl) { statusEl.textContent = '✗ error'; statusEl.className = 'plan-task-status error'; }
+        appendPlanLog('error', `✗ Step ${ev.task_id} failed: ${ev.error}`);
+        break;
+      }
+
+      case 'plan_complete':
+        appendPlanLog('complete', `🎉 Plan complete — ${ev.task_count} steps executed`);
+        notify('Plan Complete', `${ev.task_count} agent tasks completed for: ${goal.slice(0, 60)}`);
+        break;
+
+      case 'error':
+        appendPlanLog('error', `✗ ${ev.message}`);
+        break;
+    }
+  };
+
+  _wsPlanner.onerror = () => appendPlanLog('error', 'Planner connection error');
+}
+
+function appendPlanLog(cls, text) {
+  const log = $('plannerLog');
+  const div = document.createElement('div');
+  div.className = `plan-log-${cls}`;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ─── Knowledge Base ───────────────────────────────────────────────────────────
+async function loadKBEntries(query = '') {
+  const list = $('kbList');
+  if (!list) return;
+  list.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px">Loading…</div>';
+  try {
+    const url  = query ? `/api/kb/search?q=${encodeURIComponent(query)}&top_k=20` : '/api/kb';
+    const res  = await fetch(url);
+    const data = await res.json();
+    const items = data.entries || data.results || [];
+    list.innerHTML = '';
+    if (!items.length) {
+      list.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px">Knowledge base is empty. Ingest a document to begin.</div>';
+      return;
+    }
+    items.forEach(e => {
+      const div = document.createElement('div');
+      div.className = 'memory-item';
+      const score = e.score != null ? `<span class="score">${(e.score*100).toFixed(0)}%</span>` : '';
+      div.innerHTML = `
+        <div class="mem-text">${e.text.slice(0, 200)}${e.text.length > 200 ? '…' : ''}</div>
+        <div class="mem-meta">
+          <span>${e.source || 'upload'}</span>
+          <span>${e.title || ''}</span>
+          ${e.tags?.length ? '<span>' + e.tags.join(', ') + '</span>' : ''}
+          ${score}
+          <span class="mem-use" onclick="useKBEntry(${JSON.stringify(e.text).replace(/</g,'&lt;')})">→ Chat</span>
+          <span class="mem-del" onclick="deleteKBEntry('${e.entry_id}')">✕</span>
+        </div>`;
+      list.appendChild(div);
+    });
+  } catch (err) {
+    list.innerHTML = `<div style="color:var(--accent3);font-size:12px">${err.message}</div>`;
+  }
+}
+
+async function ingestToKB(file) {
+  const chunkSize = parseInt($('kbChunkSize')?.value || '800', 10);
+  const form = new FormData();
+  form.append('file', file);
+  form.append('chunk_size', chunkSize);
+  form.append('title', file.name);
+  appendMessage('user', `📚 Ingesting to KB: ${file.name}…`);
+  showTyping(true);
+  try {
+    const res  = await fetch('/api/kb/ingest', { method: 'POST', body: form });
+    const data = await res.json();
+    showTyping(false);
+    appendMessage('ai',
+      `**${file.name}** added to Knowledge Base\n- ${data.chars.toLocaleString()} chars\n- ${data.chunks} chunks indexed`
+    );
+    loadKBEntries();
+  } catch (err) {
+    showTyping(false);
+    appendMessage('ai', `⚠ KB ingest failed: ${err.message}`);
+  }
+}
+
+async function deleteKBEntry(entryId) {
+  await fetch(`/api/kb/${entryId}`, { method: 'DELETE' });
+  loadKBEntries($('kbSearchInput')?.value.trim() || '');
+}
+
+function useKBEntry(text) {
+  if (textInput) { textInput.value = text; textInput.focus(); }
+  chatPopup.classList.remove('hidden');
+  $('memoryPopup').classList.add('hidden');
+}
+
+window.deleteKBEntry = deleteKBEntry;
+window.useKBEntry    = useKBEntry;
