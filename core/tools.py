@@ -204,17 +204,116 @@ TOOL_DEFINITIONS = [
             "required": ["text"],
         },
     },
+    {
+        "name": "web_search",
+        "description": "Search the web for up-to-date information. Returns titles, URLs, and snippets.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query":       {"type": "string", "description": "Search query"},
+                "max_results": {"type": "integer", "default": 5},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "fetch_page",
+        "description": "Fetch and read the text content of a web page.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url":       {"type": "string"},
+                "max_chars": {"type": "integer", "default": 6000},
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "memory_store",
+        "description": "Save an important fact, code snippet, or insight to persistent memory for future retrieval.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text":   {"type": "string", "description": "Content to remember"},
+                "tags":   {"type": "array",  "items": {"type": "string"}, "description": "Optional tags"},
+                "source": {"type": "string", "default": "agent"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "memory_recall",
+        "description": "Search persistent memory for facts or context relevant to a query.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "top_k": {"type": "integer", "default": 5},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "read_document",
+        "description": "Read and extract text from a document file (PDF, DOCX, XLSX, TXT) in the workspace.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path":      {"type": "string", "description": "Relative path to document in workspace"},
+                "max_chars": {"type": "integer", "default": 40000},
+            },
+            "required": ["path"],
+        },
+    },
 ]
+
+
+# ── Additional tool implementations ───────────────────────────────────────────
+async def tool_web_search(query: str, max_results: int = 5) -> dict:
+    from core.search import web_search
+    results = await web_search(query, max_results=max_results)
+    return {"ok": True, "query": query, "results": results}
+
+
+async def tool_fetch_page(url: str, max_chars: int = 6000) -> dict:
+    from core.search import fetch_page
+    text = await fetch_page(url, max_chars=max_chars)
+    return {"ok": True, "url": url, "content": text}
+
+
+async def tool_memory_store(text: str, tags: list = None, source: str = "agent") -> dict:
+    from core.memory import get_memory
+    rec = await get_memory().add(text, tags=tags or [], source=source)
+    return {"ok": True, "id": rec.id, "text": text[:80]}
+
+
+async def tool_memory_recall(query: str, top_k: int = 5) -> dict:
+    from core.memory import get_memory
+    hits = await get_memory().search(query, top_k=top_k)
+    return {"ok": True, "query": query, "results": hits}
+
+
+async def tool_read_document(path: str, max_chars: int = 40000) -> dict:
+    from core.document_reader import read_document
+    p = _safe_path(path)
+    text = await read_document(p, max_chars=max_chars)
+    return {"ok": True, "path": path, "content": text, "chars": len(text)}
+
 
 # Dispatcher
 _TOOL_FN_MAP = {
-    "file_read":    tool_file_read,
-    "file_write":   tool_file_write,
-    "file_delete":  tool_file_delete,
-    "list_dir":     tool_list_dir,
-    "shell":        tool_shell,
-    "search_files": tool_search_files,
-    "grep":         tool_grep,
+    "file_read":     tool_file_read,
+    "file_write":    tool_file_write,
+    "file_delete":   tool_file_delete,
+    "list_dir":      tool_list_dir,
+    "shell":         tool_shell,
+    "search_files":  tool_search_files,
+    "grep":          tool_grep,
+    "web_search":    tool_web_search,
+    "fetch_page":    tool_fetch_page,
+    "memory_store":  tool_memory_store,
+    "memory_recall": tool_memory_recall,
+    "read_document": tool_read_document,
 }
 
 

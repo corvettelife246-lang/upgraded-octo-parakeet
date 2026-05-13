@@ -21,6 +21,7 @@
       <button class="btn-icon" id="btnOpenVideo"     title="Live Camera">📷</button>
       <button class="btn-icon" id="btnOpenWorkspace" title="Workspace">📁</button>
       <button class="btn-icon" id="btnOpenTerminal"  title="Terminal">⌨</button>
+      <button class="btn-icon" id="btnOpenMemory"    title="Memory">🧠</button>
       <button class="btn-icon" id="btnOpenSettings"  title="Settings / Model">⚙</button>
       <button class="btn-icon" id="btnTheme"         title="Toggle Theme">🌙</button>
     </div>
@@ -57,6 +58,40 @@
       <div class="stat-row"><span>TTS</span><strong>Edge-TTS / pyttsx3</strong></div>
     </section>
   </main>
+</div>
+
+<!-- ═══════════════════════ MEMORY POPUP ════════════════════════════════ -->
+<div id="memoryPopup" class="popup hidden memory-popup">
+  <div class="popup-header" id="memoryPopupHeader">
+    <span class="popup-title">🧠 Memory</span>
+    <div class="popup-controls">
+      <button class="btn-sm" id="btnMemRefresh">↻</button>
+      <button class="btn-icon sm" id="btnCloseMemory">✕</button>
+    </div>
+  </div>
+  <div class="memory-body">
+    <div class="memory-search-row">
+      <input id="memSearchInput" type="text" placeholder="Search memories…" />
+      <button class="btn-sm" id="btnMemSearch">Search</button>
+    </div>
+    <div class="memory-add-row">
+      <input id="memAddInput" type="text" placeholder="Save a fact or note…" />
+      <button class="btn-sm accent" id="btnMemAdd">+ Save</button>
+    </div>
+
+    <!-- Doc ingest -->
+    <div class="mem-ingest-row">
+      <label class="btn-sm upload-label">
+        📄 Ingest Document
+        <input type="file" id="docIngestInput" style="display:none"
+               accept=".pdf,.docx,.doc,.xlsx,.txt,.md,.py,.js,.ts,.json" />
+      </label>
+      <label class="mem-check"><input type="checkbox" id="ingestToMemory" checked /> Memory</label>
+      <label class="mem-check"><input type="checkbox" id="ingestToWorkspace" /> Workspace</label>
+    </div>
+
+    <div class="memory-list" id="memoryList"></div>
+  </div>
 </div>
 
 <!-- ═══════════════════════ WORKSPACE POPUP ══════════════════════════════ -->
@@ -170,8 +205,10 @@
         <option value="vision">👁 Vision</option>
         <option value="project">🏗 Project</option>
       </select>
-      <button class="btn-icon sm" id="btnMinimize" title="Minimize">─</button>
-      <button class="btn-icon sm" id="btnCloseChat" title="Close">✕</button>
+      <button class="btn-icon sm" id="btnExportChat" title="Export chat">⬇</button>
+      <button class="btn-icon sm" id="btnWebSearch"  title="Web search">🌐</button>
+      <button class="btn-icon sm" id="btnMinimize"   title="Minimize">─</button>
+      <button class="btn-icon sm" id="btnCloseChat"  title="Close">✕</button>
     </div>
   </div>
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Entry point — loads .env then starts the FastAPI server."""
+"""Entry point — loads .env, runs health check, then starts the FastAPI server."""
 import sys
 from pathlib import Path
 
@@ -10,7 +10,7 @@ try:
 except ImportError:
     pass
 
-from config.settings import HOST, PORT, DEBUG
+from config.settings import DEBUG, HOST, PORT
 
 if __name__ == "__main__":
     import uvicorn

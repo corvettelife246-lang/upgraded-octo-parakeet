@@ -21,6 +21,8 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
@@ -46,6 +48,13 @@ from vision.image_processor import ImageProcessor
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from core.health_check import print_banner
+    await print_banner()
+    yield
+
 # ------------------------------------------------------------------
 # App bootstrap
 # ------------------------------------------------------------------
@@ -53,6 +62,7 @@ app = FastAPI(
     title="AI Multi-Agent Admin",
     description="Autonomous AI platform with DL, LLM, ML, Reasoning, Voice, and Vision",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -645,6 +655,139 @@ async def upload_for_chat(file: UploadFile = File(...)):
     except Exception:
         b64 = base64.b64encode(raw).decode("utf-8")
         return {"type": "binary", "filename": file.filename, "b64": b64, "size": len(raw)}
+
+
+# ------------------------------------------------------------------
+# Memory API
+# ------------------------------------------------------------------
+class MemoryAddRequest(BaseModel):
+    text: str
+    tags: list[str] = []
+    source: str = "user"
+
+
+@app.post("/api/memory")
+async def memory_add(req: MemoryAddRequest):
+    from core.memory import get_memory
+    rec = await get_memory().add(req.text, tags=req.tags, source=req.source)
+    return {"id": rec.id, "text": rec.text}
+
+
+@app.get("/api/memory")
+async def memory_list():
+    from core.memory import get_memory
+    return {"memories": get_memory().list_all(), "count": get_memory().count()}
+
+
+@app.get("/api/memory/search")
+async def memory_search(q: str, top_k: int = 5):
+    from core.memory import get_memory
+    return {"results": await get_memory().search(q, top_k=top_k)}
+
+
+@app.delete("/api/memory/{memory_id}")
+async def memory_delete(memory_id: str):
+    from core.memory import get_memory
+    ok = get_memory().delete(memory_id)
+    return {"ok": ok}
+
+
+# ------------------------------------------------------------------
+# Web search API
+# ------------------------------------------------------------------
+@app.get("/api/search")
+async def search_web(q: str, max_results: int = 6):
+    from core.search import web_search
+    results = await web_search(q, max_results=max_results)
+    return {"query": q, "results": results}
+
+
+# ------------------------------------------------------------------
+# Document ingestion
+# ------------------------------------------------------------------
+@app.post("/api/ingest")
+async def ingest_document(
+    file: UploadFile = File(...),
+    save_to_workspace: bool = Form(False),
+    save_to_memory: bool   = Form(False),
+):
+    from core.document_reader import read_document_bytes
+    raw  = await file.read()
+    text = await read_document_bytes(raw, filename=file.filename or "")
+    result: dict = {"filename": file.filename, "chars": len(text), "preview": text[:400]}
+
+    if save_to_workspace:
+        from core.tools import _safe_path
+        dest = _safe_path(file.filename or "document.txt")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(raw)
+        result["workspace_path"] = str(dest.relative_to(WORKSPACE_DIR))
+
+    if save_to_memory:
+        from core.memory import get_memory
+        chunks = [text[i:i+800] for i in range(0, min(len(text), 8000), 800)]
+        for chunk in chunks:
+            await get_memory().add(chunk, tags=["document", file.filename or ""], source="ingest")
+        result["memory_chunks"] = len(chunks)
+
+    result["content"] = text[:60000]
+    return result
+
+
+# ------------------------------------------------------------------
+# Export conversation
+# ------------------------------------------------------------------
+class ExportRequest(BaseModel):
+    messages: list[dict]
+    format: str = "markdown"     # "markdown" | "html" | "json"
+    title: str = "AI Chat Export"
+
+
+@app.post("/api/export")
+async def export_conversation(req: ExportRequest):
+    from datetime import datetime
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+    if req.format == "json":
+        content  = json.dumps({"title": req.title, "exported": ts, "messages": req.messages}, indent=2)
+        media    = "application/json"
+        filename = "chat_export.json"
+
+    elif req.format == "html":
+        rows = []
+        for m in req.messages:
+            role  = m.get("role", "user")
+            text  = m.get("content", "").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+            color = "#1a1e29" if role == "user" else "#13161e"
+            rows.append(f'<div style="background:{color};padding:12px;margin:6px 0;border-radius:8px"><strong>{role}</strong><br>{text}</div>')
+        content  = f"<!DOCTYPE html><html><head><meta charset=utf-8><title>{req.title}</title></head><body style='font-family:sans-serif;background:#0d0f14;color:#e4e6f0;padding:20px'><h2>{req.title}</h2><p>{ts}</p>{''.join(rows)}</body></html>"
+        media    = "text/html"
+        filename = "chat_export.html"
+
+    else:  # markdown
+        lines = [f"# {req.title}", f"*{ts}*", ""]
+        for m in req.messages:
+            role  = m.get("role", "user")
+            text  = m.get("content", "")
+            lines += [f"**{role.capitalize()}**", "", text, ""]
+        content  = "\n".join(lines)
+        media    = "text/markdown"
+        filename = "chat_export.md"
+
+    return Response(
+        content=content,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ------------------------------------------------------------------
+# Health check (detailed)
+# ------------------------------------------------------------------
+@app.get("/api/health/detailed")
+async def health_detailed():
+    from core.health_check import run_health_check
+    return await run_health_check(verbose=False)
 
 
 # ------------------------------------------------------------------

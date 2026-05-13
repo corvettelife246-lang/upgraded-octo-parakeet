@@ -496,6 +496,30 @@ function init() {
   refreshTasks();
   setInterval(refreshTasks, 10000);
 
+  // Memory popup
+  $('btnOpenMemory').onclick = () => {
+    $('memoryPopup').classList.toggle('hidden');
+    if (!$('memoryPopup').classList.contains('hidden')) loadMemories();
+  };
+  $('btnCloseMemory').onclick = () => $('memoryPopup').classList.add('hidden');
+  $('btnMemRefresh').onclick  = () => loadMemories();
+  $('btnMemSearch').onclick   = () => loadMemories($('memSearchInput').value.trim());
+  $('memSearchInput').addEventListener('keydown', e => { if(e.key==='Enter') loadMemories($('memSearchInput').value.trim()); });
+  $('btnMemAdd').onclick      = addMemory;
+  $('memAddInput').addEventListener('keydown', e => { if(e.key==='Enter') addMemory(); });
+  $('docIngestInput').onchange = async e => {
+    for (const f of e.target.files) await ingestDocument(f);
+    e.target.value = '';
+    chatPopup.classList.remove('hidden');
+  };
+
+  // Export & web search in chat header
+  $('btnExportChat').onclick = () => {
+    const fmt = prompt('Export format: markdown / html / json', 'markdown');
+    if (fmt) exportChat(fmt);
+  };
+  $('btnWebSearch').onclick = quickWebSearch;
+
   // Workspace popup
   $('btnOpenWorkspace').onclick = () => {
     $('workspacePopup').classList.toggle('hidden');
@@ -602,6 +626,7 @@ function init() {
   makeDraggable($('settingsPopup'),    $('settingsPopupHeader'));
   makeDraggable($('workspacePopup'),   $('workspacePopupHeader'));
   makeDraggable($('terminalPopup'),    $('terminalPopupHeader'));
+  makeDraggable($('memoryPopup'),      $('memoryPopupHeader'));
 
   // Load backend info into dashboard stats
   loadBackendInfo();
@@ -628,6 +653,116 @@ function switchToTextMode() {
   $('voiceMode').classList.add('hidden');
   $('videoMode').classList.add('hidden');
   state.currentMode = 'text';
+}
+
+// ─── Memory ───────────────────────────────────────────────────────────────────
+async function loadMemories(query = '') {
+  const list = $('memoryList');
+  if (!list) return;
+  try {
+    const url  = query ? `/api/memory/search?q=${encodeURIComponent(query)}&top_k=20` : '/api/memory';
+    const res  = await fetch(url);
+    const data = await res.json();
+    const items = data.memories || data.results || [];
+    list.innerHTML = items.length ? '' : '<div style="color:var(--text2);font-size:12px;padding:8px">No memories yet.</div>';
+    items.forEach(m => {
+      const div = document.createElement('div');
+      div.className = 'memory-item';
+      const score = m.score != null ? `<span class="score">${(m.score*100).toFixed(0)}%</span>` : '';
+      div.innerHTML = `<div class="mem-text">${m.text.slice(0,180)}</div>
+                       <div class="mem-meta">
+                         <span>${m.source || 'user'}</span>
+                         ${m.tags?.length ? '<span>'+m.tags.join(', ')+'</span>' : ''}
+                         ${score}
+                         <span class="mem-use" onclick="useMemory(${JSON.stringify(m.text).replace(/</g,'&lt;')})">→ Chat</span>
+                         <span class="mem-del" onclick="deleteMemory('${m.id}')">✕</span>
+                       </div>`;
+      list.appendChild(div);
+    });
+  } catch (e) {
+    if ($('memoryList')) $('memoryList').innerHTML = `<div style="color:var(--accent3);font-size:12px">${e.message}</div>`;
+  }
+}
+
+async function addMemory() {
+  const inp = $('memAddInput');
+  const text = inp?.value.trim();
+  if (!text) return;
+  await fetch('/api/memory', { method:'POST', headers:{'Content-Type':'application/json'},
+                                body: JSON.stringify({text, source:'user'}) });
+  inp.value = '';
+  loadMemories();
+}
+
+async function deleteMemory(id) {
+  await fetch(`/api/memory/${id}`, { method:'DELETE' });
+  loadMemories();
+}
+
+function useMemory(text) {
+  if (textInput) { textInput.value = text; textInput.focus(); }
+  chatPopup.classList.remove('hidden');
+  $('memoryPopup').classList.add('hidden');
+}
+
+// ─── Export chat ──────────────────────────────────────────────────────────────
+async function exportChat(format = 'markdown') {
+  if (!state.chatHistory.length) { alert('Nothing to export yet.'); return; }
+  const res  = await fetch('/api/export', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ messages: state.chatHistory, format, title: 'AI Chat Session' }),
+  });
+  const blob = await res.blob();
+  const ext  = {markdown:'md', html:'html', json:'json'}[format] || 'txt';
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `chat_export.${ext}`;
+  a.click();
+}
+
+// ─── Web search ───────────────────────────────────────────────────────────────
+async function quickWebSearch() {
+  const query = prompt('Web search query:');
+  if (!query) return;
+  appendMessage('user', `🌐 Search: ${query}`);
+  showTyping(true);
+  try {
+    const res  = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+    const data = await res.json();
+    const lines = (data.results||[]).map(r => `**${r.title}**\n${r.snippet}\n${r.url}`).join('\n\n');
+    showTyping(false);
+    appendMessage('ai', lines || 'No results found.');
+  } catch (e) {
+    showTyping(false);
+    appendMessage('ai', `⚠ Search failed: ${e.message}`);
+  }
+}
+
+// ─── Document ingest ──────────────────────────────────────────────────────────
+async function ingestDocument(file) {
+  const toMem  = $('ingestToMemory')?.checked;
+  const toWork = $('ingestToWorkspace')?.checked;
+  const form   = new FormData();
+  form.append('file', file);
+  form.append('save_to_memory',    toMem  ? 'true' : 'false');
+  form.append('save_to_workspace', toWork ? 'true' : 'false');
+  appendMessage('user', `📄 Ingesting: ${file.name}…`);
+  showTyping(true);
+  try {
+    const res  = await fetch('/api/ingest', { method: 'POST', body: form });
+    const data = await res.json();
+    showTyping(false);
+    const summary = `**${file.name}** ingested\n- ${data.chars.toLocaleString()} characters\n` +
+      (data.memory_chunks ? `- ${data.memory_chunks} chunks saved to memory\n` : '') +
+      (data.workspace_path ? `- Saved to workspace: ${data.workspace_path}\n` : '') +
+      `\nPreview:\n\`\`\`\n${data.preview}\n\`\`\``;
+    appendMessage('ai', summary);
+    if (toMem) loadMemories();
+  } catch (e) {
+    showTyping(false);
+    appendMessage('ai', `⚠ Ingest failed: ${e.message}`);
+  }
 }
 
 // ─── Workspace ────────────────────────────────────────────────────────────────
@@ -966,3 +1101,5 @@ async function loadSessionHistory(id) {
 window.addEventListener('DOMContentLoaded', init);
 window.copyCode         = copyCode;
 window.downloadProject  = downloadProject;
+window.deleteMemory     = deleteMemory;
+window.useMemory        = useMemory;

@@ -114,7 +114,13 @@ class AgentManager:
     # ------------------------------------------------------------------
     async def _execute_task(self, task: AgentTask) -> str:
         cfg = self._agent_configs.get(task.agent_type, {})
-        system_prompt = self._build_system_prompt(task.agent_type, cfg)
+        # Inject relevant memories into system prompt
+        try:
+            from core.memory import get_memory
+            mem_block = await get_memory().summarize_for_context(task.prompt, top_k=3)
+        except Exception:
+            mem_block = ""
+        system_prompt = self._build_system_prompt(task.agent_type, cfg, mem_block)
         messages = self._build_messages(task)
 
         if task.agent_type == "reasoning":
@@ -164,15 +170,16 @@ class AgentManager:
             return "vision"
         return "admin"
 
-    def _build_system_prompt(self, agent_type: str, cfg: dict) -> str:
+    def _build_system_prompt(self, agent_type: str, cfg: dict, mem_block: str = "") -> str:
         caps = ", ".join(cfg.get("capabilities", []))
-        return (
+        base = (
             f"You are the {cfg.get('name', agent_type)} — {cfg.get('description', '')}. "
             f"Your capabilities include: {caps}. "
             "Respond concisely, accurately, and autonomously. "
             "When writing code always include complete, runnable implementations. "
             "You are part of an autonomous multi-agent AI platform running on WSL-2 Linux."
         )
+        return f"{base}\n\n{mem_block}" if mem_block else base
 
     @staticmethod
     def _build_messages(task: AgentTask) -> list[dict]:
