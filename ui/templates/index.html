@@ -19,6 +19,7 @@
     <div class="header-right">
       <button class="btn-icon" id="btnOpenChat" title="Open Chat">💬</button>
       <button class="btn-icon" id="btnOpenVideo" title="Live Camera">📷</button>
+      <button class="btn-icon" id="btnOpenSettings" title="Settings / Model">⚙</button>
       <button class="btn-icon" id="btnTheme" title="Toggle Theme">🌙</button>
     </div>
   </header>
@@ -43,16 +44,47 @@
       <div class="task-log" id="taskLog"></div>
     </section>
 
-    <!-- Quick stats -->
+    <!-- System stats (live from /api/backend) -->
     <section class="card stats-card">
       <h3>System</h3>
       <div class="stat-row"><span>Platform</span><strong>WSL-2 Linux</strong></div>
-      <div class="stat-row"><span>LLM</span><strong>Claude Opus 4.7</strong></div>
+      <div class="stat-row"><span>Backend</span><strong id="statBackend">—</strong></div>
+      <div class="stat-row"><span>Model</span><strong id="statModel">—</strong></div>
       <div class="stat-row"><span>STT</span><strong>Whisper</strong></div>
-      <div class="stat-row"><span>TTS</span><strong>Edge-TTS</strong></div>
-      <div class="stat-row"><span>Vision</span><strong>OpenCV + Claude</strong></div>
+      <div class="stat-row"><span>TTS</span><strong>Edge-TTS / pyttsx3</strong></div>
     </section>
   </main>
+</div>
+
+<!-- ═══════════════════════ SETTINGS / MODEL POPUP ═══════════════════════ -->
+<div id="settingsPopup" class="popup hidden settings-popup">
+  <div class="popup-header" id="settingsPopupHeader">
+    <span class="popup-title">⚙ Settings &amp; Model</span>
+    <div class="popup-controls">
+      <button class="btn-icon sm" id="btnCloseSettings">✕</button>
+    </div>
+  </div>
+  <div class="settings-body">
+    <h4>LLM Backend</h4>
+    <div class="backend-pills" id="backendInfo">
+      <span class="badge" id="badgeBackend">loading…</span>
+    </div>
+
+    <h4 style="margin-top:14px">Active Model</h4>
+    <div class="model-row">
+      <select id="modelSelect" class="model-select"></select>
+      <button class="btn-sm" id="btnSwitchModel">Switch</button>
+    </div>
+    <div id="switchStatus" class="switch-status"></div>
+
+    <h4 style="margin-top:14px">Sessions</h4>
+    <div class="session-controls">
+      <button class="btn-sm" id="btnSaveSession">💾 Save Session</button>
+      <button class="btn-sm" id="btnNewSession">＋ New Session</button>
+      <button class="btn-sm danger" id="btnClearHistory">🗑 Clear Chat</button>
+    </div>
+    <div class="session-list" id="sessionList"></div>
+  </div>
 </div>
 
 <!-- ═══════════════════════════ CHAT POPUP ═══════════════════════════════ -->
@@ -99,7 +131,7 @@
     <!-- Voice mode -->
     <div id="voiceMode" class="input-mode hidden">
       <div class="voice-ui">
-        <button class="btn-mic" id="btnMic" title="Hold to record">🎙</button>
+        <button class="btn-mic" id="btnMic" title="Tap to record">🎙</button>
         <span class="voice-status" id="voiceStatus">Tap to record</span>
         <div class="waveform" id="waveform">
           <div class="bar"></div><div class="bar"></div><div class="bar"></div>

@@ -1,6 +1,5 @@
 """Central configuration — reads from environment with sensible defaults."""
 import os
-import subprocess
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -30,11 +29,16 @@ def _wsl2_host_ip() -> str:
         pass
     return "localhost"
 
+def _is_wsl2() -> bool:
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except OSError:
+        return False
+
 _foundry_host = os.getenv("FOUNDRY_LOCAL_HOST") or (
-    _wsl2_host_ip() if os.path.exists("/proc/version") and
-    open("/proc/version").read().lower().__contains__("microsoft") else "localhost"
+    _wsl2_host_ip() if _is_wsl2() else "localhost"
 )
-FOUNDRY_LOCAL_URL: str  = os.getenv("FOUNDRY_LOCAL_URL",  f"http://{_foundry_host}:5273")
+FOUNDRY_LOCAL_URL: str   = os.getenv("FOUNDRY_LOCAL_URL",   f"http://{_foundry_host}:5273")
 FOUNDRY_LOCAL_MODEL: str = os.getenv("FOUNDRY_LOCAL_MODEL", "phi-4-mini")
 
 # Server

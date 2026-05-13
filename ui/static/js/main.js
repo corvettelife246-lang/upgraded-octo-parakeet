@@ -489,9 +489,34 @@ function init() {
   refreshTasks();
   setInterval(refreshTasks, 10000);
 
+  // Settings popup
+  $('btnOpenSettings').onclick = () => {
+    $('settingsPopup').classList.toggle('hidden');
+    loadBackendInfo();
+    loadSessions();
+  };
+  $('btnCloseSettings').onclick = () => $('settingsPopup').classList.add('hidden');
+
+  // Model switch
+  $('btnSwitchModel').onclick = switchModel;
+
+  // Session controls
+  $('btnSaveSession').onclick  = saveSession;
+  $('btnNewSession').onclick   = newSession;
+  $('btnClearHistory').onclick = () => {
+    if (confirm('Clear all chat messages?')) {
+      chatMessages.innerHTML = '';
+      state.chatHistory = [];
+    }
+  };
+
   // Draggable
-  makeDraggable(chatPopup,  $('chatPopupHeader'));
-  makeDraggable(videoPopup, $('videoPopupHeader'));
+  makeDraggable(chatPopup,      $('chatPopupHeader'));
+  makeDraggable(videoPopup,     $('videoPopupHeader'));
+  makeDraggable($('settingsPopup'), $('settingsPopupHeader'));
+
+  // Load backend info into dashboard stats
+  loadBackendInfo();
 
   // Welcome message
   appendMessage('ai',
@@ -515,6 +540,141 @@ function switchToTextMode() {
   $('voiceMode').classList.add('hidden');
   $('videoMode').classList.add('hidden');
   state.currentMode = 'text';
+}
+
+// ─── Backend / model info ─────────────────────────────────────────────────────
+async function loadBackendInfo() {
+  try {
+    const res  = await fetch('/api/backend');
+    const data = await res.json();
+
+    // Dashboard stats
+    const statBackend = $('statBackend');
+    const statModel   = $('statModel');
+    if (statBackend) statBackend.textContent = data.backend === 'foundry_local' ? 'Foundry Local' : 'Anthropic Claude';
+    if (statModel)   statModel.textContent   = data.active_model || '—';
+
+    // Settings panel badge
+    const badge = $('badgeBackend');
+    if (badge) {
+      const cls = data.backend === 'foundry_local' ? 'foundry' : (data.status === 'ok' ? 'anthropic' : 'error');
+      badge.className = `badge ${cls}`;
+      badge.textContent = data.backend === 'foundry_local'
+        ? `⚡ Foundry Local — ${data.url || ''}`
+        : `☁ Anthropic Claude API`;
+    }
+
+    // Populate model select
+    const sel = $('modelSelect');
+    if (sel) {
+      sel.innerHTML = '';
+      const models = Array.isArray(data.available_models)
+        ? data.available_models
+        : (data.available_models || []).map(m => m.id || m);
+      const active = data.active_model || '';
+      models.forEach(m => {
+        const id = typeof m === 'string' ? m : m.id;
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = id;
+        if (id === active) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      if (!models.length) {
+        const opt = document.createElement('option');
+        opt.textContent = active || 'default';
+        opt.value = active;
+        sel.appendChild(opt);
+      }
+    }
+  } catch (e) {
+    const badge = $('badgeBackend');
+    if (badge) { badge.className = 'badge error'; badge.textContent = 'Backend unreachable'; }
+  }
+}
+
+async function switchModel() {
+  const sel    = $('modelSelect');
+  const status = $('switchStatus');
+  if (!sel) return;
+  const model = sel.value;
+  status.textContent = `Switching to ${model}…`;
+  status.style.color = 'var(--text2)';
+  try {
+    const res  = await fetch('/api/switch-model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      status.textContent = `✓ Switched to ${data.active_model}`;
+      status.style.color = 'var(--green)';
+      const statModel = $('statModel');
+      if (statModel) statModel.textContent = data.active_model;
+    } else {
+      status.textContent = `✗ ${data.detail}`;
+      status.style.color = 'var(--accent3)';
+    }
+  } catch (e) {
+    status.textContent = `✗ Error: ${e.message}`;
+    status.style.color = 'var(--accent3)';
+  }
+}
+
+// ─── Session management ───────────────────────────────────────────────────────
+function sessionId() {
+  if (!state.sessionId) state.sessionId = `sess_${Date.now()}`;
+  return state.sessionId;
+}
+
+async function saveSession() {
+  const id = sessionId();
+  try {
+    await fetch(`/api/sessions/${id}/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state.chatHistory),
+    });
+    $('switchStatus') && ($('switchStatus').textContent = '✓ Session saved');
+    loadSessions();
+  } catch (e) {}
+}
+
+function newSession() {
+  state.sessionId = `sess_${Date.now()}`;
+  chatMessages.innerHTML = '';
+  state.chatHistory = [];
+}
+
+async function loadSessions() {
+  const list = $('sessionList');
+  if (!list) return;
+  try {
+    const res  = await fetch('/api/sessions');
+    const data = await res.json();
+    list.innerHTML = '';
+    data.sessions.forEach(s => {
+      const div = document.createElement('div');
+      div.className = 'session-item';
+      div.innerHTML = `<span>${s.id.replace('sess_', '#')}</span><span class="turns">${s.turns} turns</span>`;
+      div.onclick = () => loadSessionHistory(s.id);
+      list.appendChild(div);
+    });
+  } catch {}
+}
+
+async function loadSessionHistory(id) {
+  try {
+    const res  = await fetch(`/api/sessions/${id}`);
+    const data = await res.json();
+    state.chatHistory = data.messages || [];
+    state.sessionId   = id;
+    chatMessages.innerHTML = '';
+    state.chatHistory.forEach(m => appendMessage(m.role === 'user' ? 'user' : 'ai', m.content));
+    $('settingsPopup').classList.add('hidden');
+    chatPopup.classList.remove('hidden');
+  } catch {}
 }
 
 window.addEventListener('DOMContentLoaded', init);

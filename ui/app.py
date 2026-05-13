@@ -280,6 +280,72 @@ async def list_models():
     }
 
 
+class SwitchModelRequest(BaseModel):
+    model: str
+
+
+@app.post("/api/switch-model")
+async def switch_model(req: SwitchModelRequest):
+    """Hot-swap the active model on the Foundry Local backend (no restart needed)."""
+    import core.backend_router as br
+    llm = br.backend()
+    if LLM_BACKEND != "foundry":
+        raise HTTPException(status_code=400, detail="Model switching only supported on Foundry Local backend")
+    available = llm.list_models()
+    if available and req.model not in available:
+        raise HTTPException(status_code=404, detail=f"Model '{req.model}' not loaded. Available: {available}")
+    llm._model = req.model
+    # Also update agents
+    for agent in _agents.values():
+        agent.llm._model = req.model
+    logger.info("Switched active model to: %s", req.model)
+    return {"status": "ok", "active_model": req.model}
+
+
+# ------------------------------------------------------------------
+# Session history — persist/load chat history from disk
+# ------------------------------------------------------------------
+_HISTORY_DIR = BASE_DIR / "data" / "sessions"
+_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.get("/api/sessions")
+async def list_sessions():
+    sessions = []
+    for f in sorted(_HISTORY_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:20]:
+        try:
+            data = json.loads(f.read_text())
+            sessions.append({"id": f.stem, "created": data.get("created"), "turns": len(data.get("messages", []))})
+        except Exception:
+            pass
+    return {"sessions": sessions}
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session(session_id: str):
+    path = _HISTORY_DIR / f"{session_id}.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Session not found")
+    return json.loads(path.read_text())
+
+
+@app.post("/api/sessions/{session_id}/save")
+async def save_session(session_id: str, messages: list[dict]):
+    from datetime import datetime
+    path = _HISTORY_DIR / f"{session_id}.json"
+    data = {"id": session_id, "created": datetime.utcnow().isoformat(), "messages": messages}
+    path.write_text(json.dumps(data, indent=2))
+    return {"status": "saved", "path": str(path)}
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str):
+    path = _HISTORY_DIR / f"{session_id}.json"
+    if path.exists():
+        path.unlink()
+    return {"status": "deleted"}
+
+
 # ------------------------------------------------------------------
 # WebSocket — bidirectional real-time chat
 # ------------------------------------------------------------------
