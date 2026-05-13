@@ -34,8 +34,9 @@ from agents.ml_agent import MLAgent
 from agents.reasoning_agent import ReasoningAgent
 from agents.research_agent import ResearchAgent
 from agents.vision_agent import VisionAgent
-from config.settings import BASE_DIR, HOST, PORT, SECRET_KEY
+from config.settings import BASE_DIR, FOUNDRY_LOCAL_MODEL, FOUNDRY_LOCAL_URL, HOST, LLM_BACKEND, PORT, SECRET_KEY
 from core.agent_manager import AgentManager
+from core.backend_router import backend as get_backend
 from voice.voice_pipeline import VoicePipeline
 from vision.camera import Camera
 from vision.image_processor import ImageProcessor
@@ -226,7 +227,57 @@ async def camera_snapshot():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "agents": list(_agents.keys())}
+    return {
+        "status": "ok",
+        "agents": list(_agents.keys()),
+        "llm_backend": LLM_BACKEND,
+    }
+
+
+@app.get("/api/backend")
+async def backend_info():
+    """Return active LLM backend details and available models."""
+    llm = get_backend()
+    if LLM_BACKEND == "foundry":
+        health = llm.health_check()
+        return {
+            "backend": "foundry_local",
+            "url": FOUNDRY_LOCAL_URL,
+            "active_model": FOUNDRY_LOCAL_MODEL,
+            "available_models": health.get("models", []),
+            "status": health.get("status"),
+        }
+    return {
+        "backend": "anthropic",
+        "active_model": "claude-opus-4-7",
+        "available_models": [
+            "claude-opus-4-7",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5-20251001",
+        ],
+        "status": "ok" if __import__("config.settings", fromlist=["ANTHROPIC_API_KEY"]).ANTHROPIC_API_KEY else "no_api_key",
+    }
+
+
+@app.get("/api/models")
+async def list_models():
+    """List locally available Foundry Local models (or Claude models if using Anthropic)."""
+    llm = get_backend()
+    if LLM_BACKEND == "foundry":
+        models = llm.list_models()
+        return {
+            "backend": "foundry_local",
+            "models": models,
+            "note": "Run 'foundry model list' on Windows to see all downloaded models",
+        }
+    return {
+        "backend": "anthropic",
+        "models": [
+            {"id": "claude-opus-4-7",          "description": "Most capable — reasoning, coding, analysis"},
+            {"id": "claude-sonnet-4-6",         "description": "Balanced — fast and capable"},
+            {"id": "claude-haiku-4-5-20251001", "description": "Fastest — lightweight tasks"},
+        ],
+    }
 
 
 # ------------------------------------------------------------------

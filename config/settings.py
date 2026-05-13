@@ -1,14 +1,41 @@
 """Central configuration — reads from environment with sensible defaults."""
 import os
+import subprocess
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# ── LLM Backend ───────────────────────────────────────────────────────────────
+# Set LLM_BACKEND=foundry  to use Microsoft Foundry Local (local GPU inference)
+# Set LLM_BACKEND=anthropic (default) to use Anthropic Claude API
+LLM_BACKEND: str = os.getenv("LLM_BACKEND", "anthropic").lower()  # "anthropic" | "foundry"
 
 # Anthropic
 ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "claude-opus-4-7")
 REASONING_MODEL: str = os.getenv("REASONING_MODEL", "claude-opus-4-7")
 FAST_MODEL: str = os.getenv("FAST_MODEL", "claude-haiku-4-5-20251001")
+
+# ── Microsoft Foundry Local ───────────────────────────────────────────────────
+# Foundry Local runs on Windows and exposes an OpenAI-compatible API.
+# From WSL-2 the Windows host is reachable via the nameserver in /etc/resolv.conf.
+def _wsl2_host_ip() -> str:
+    """Auto-detect Windows host IP from WSL-2 resolv.conf."""
+    try:
+        with open("/etc/resolv.conf") as f:
+            for line in f:
+                if line.startswith("nameserver"):
+                    return line.split()[1].strip()
+    except OSError:
+        pass
+    return "localhost"
+
+_foundry_host = os.getenv("FOUNDRY_LOCAL_HOST") or (
+    _wsl2_host_ip() if os.path.exists("/proc/version") and
+    open("/proc/version").read().lower().__contains__("microsoft") else "localhost"
+)
+FOUNDRY_LOCAL_URL: str  = os.getenv("FOUNDRY_LOCAL_URL",  f"http://{_foundry_host}:5273")
+FOUNDRY_LOCAL_MODEL: str = os.getenv("FOUNDRY_LOCAL_MODEL", "phi-4-mini")
 
 # Server
 HOST: str = os.getenv("HOST", "0.0.0.0")

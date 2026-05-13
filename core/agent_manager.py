@@ -8,8 +8,8 @@ from typing import Any, AsyncIterator, Optional
 
 import yaml
 
-from config.settings import AGENT_TIMEOUT, BASE_DIR, MAX_AGENTS
-from core.llm_interface import LLMInterface
+from config.settings import AGENT_TIMEOUT, BASE_DIR, LLM_BACKEND, MAX_AGENTS
+from core.backend_router import backend as get_backend
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class AgentManager:
     """Central hub that routes tasks to specialized agents and tracks execution."""
 
     def __init__(self) -> None:
-        self.llm = LLMInterface()
+        self.llm = get_backend()
         self._tasks: dict[str, AgentTask] = {}
         self._agent_configs: dict[str, dict] = self._load_agent_configs()
         self._active_count = 0

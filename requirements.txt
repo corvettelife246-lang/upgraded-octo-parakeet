@@ -1,5 +1,8 @@
-# ─── Core API ───────────────────────────────────────────────────
+# ─── LLM Backends ───────────────────────────────────────────────
+# Anthropic Claude API (cloud)
 anthropic>=0.34.0
+# OpenAI-compatible SDK — required for Microsoft Foundry Local (local)
+openai>=1.35.0
 
 # ─── Web server ─────────────────────────────────────────────────
 fastapi>=0.111.0
