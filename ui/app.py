@@ -218,9 +218,13 @@ async def snapshot_endpoint(
 
 @app.post("/api/code/execute")
 async def execute_code(req: CodeExecuteRequest):
-    code_agent: CodeAgent = _agents["code"]  # type: ignore
-    filename = req.filename or f"exec_{uuid.uuid4().hex[:8]}.py"
-    result = await code_agent.save_and_execute(req.code, filename)
+    from core.code_runner import run_code
+    from core.tools import _safe_path
+    result = await run_code(req.code, language=req.language, timeout=30)
+    # Record artifact if a filename was given
+    if req.filename and result.get("ok"):
+        from core.artifacts import get_artifacts
+        get_artifacts().record(req.filename, agent="code", tags=["executed"])
     return result
 
 
@@ -1044,6 +1048,109 @@ async def export_conversation(req: ExportRequest):
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ------------------------------------------------------------------
+# Streaming code execution WebSocket
+# ------------------------------------------------------------------
+@app.websocket("/ws/code")
+async def websocket_code(ws: WebSocket):
+    """
+    Stream code execution output line by line.
+    Client sends: {"code": "print('hi')", "language": "python", "timeout": 30}
+    Server streams: {type: output|error|exit, text|code, duration_ms}
+    """
+    await ws.accept()
+    try:
+        raw  = await ws.receive_text()
+        data = json.loads(raw)
+        code     = data.get("code", "")
+        language = data.get("language", "python")
+        timeout  = int(data.get("timeout", 30))
+
+        if not code:
+            await ws.send_text(json.dumps({"type": "error", "text": "code required"}))
+            return
+
+        from core.code_runner import stream_code
+        await ws.send_text(json.dumps({"type": "start", "language": language}))
+        async for event in stream_code(code, language=language, timeout=timeout):
+            await ws.send_text(json.dumps(event))
+
+        # Auto-record if code wrote files (simple heuristic: scan after execution)
+        from core.artifacts import get_artifacts
+        get_artifacts().scan_workspace(agent="code")
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.exception("Code WS error")
+        try:
+            await ws.send_text(json.dumps({"type": "error", "text": str(exc)}))
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------------
+# Artifacts API
+# ------------------------------------------------------------------
+@app.get("/api/artifacts")
+async def artifacts_list(agent: str = "", file_type: str = ""):
+    from core.artifacts import get_artifacts
+    store = get_artifacts()
+    return {
+        "artifacts": store.list_all(agent=agent, file_type=file_type),
+        "stats":     store.stats(),
+    }
+
+
+@app.post("/api/artifacts/scan")
+async def artifacts_scan():
+    from core.artifacts import get_artifacts
+    added = get_artifacts().scan_workspace(agent="scan")
+    return {"added": added}
+
+
+@app.delete("/api/artifacts/{artifact_id}")
+async def artifact_delete(artifact_id: str, delete_file: bool = False):
+    from core.artifacts import get_artifacts
+    ok = get_artifacts().delete(artifact_id, delete_file=delete_file)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------
+# Analytics API — dashboard stats
+# ------------------------------------------------------------------
+@app.get("/api/analytics")
+async def analytics():
+    from core.memory import get_memory
+    from core.knowledge_base import get_kb
+    from core.artifacts import get_artifacts
+    from core.scheduler import get_scheduler
+
+    tasks     = agent_manager.list_tasks()
+    by_status: dict[str, int] = {}
+    by_agent:  dict[str, int] = {}
+    for t in tasks:
+        by_status[t["status"]]     = by_status.get(t["status"], 0) + 1
+        by_agent[t["agent_type"]]  = by_agent.get(t["agent_type"], 0) + 1
+
+    art_stats = get_artifacts().stats()
+
+    return {
+        "tasks": {
+            "total":     len(tasks),
+            "by_status": by_status,
+            "by_agent":  by_agent,
+        },
+        "memory":    {"count": get_memory().count()},
+        "kb":        {"count": get_kb().count()},
+        "artifacts": art_stats,
+        "scheduler": {"jobs": len(get_scheduler().list_jobs())},
+        "agents":    list(_agents.keys()),
+    }
 
 
 # ------------------------------------------------------------------

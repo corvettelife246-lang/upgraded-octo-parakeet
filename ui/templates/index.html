@@ -41,6 +41,7 @@
         <div class="agent-chip ml">ML</div>
         <div class="agent-chip vision">Vision</div>
         <div class="agent-chip project">Project</div>
+        <div class="agent-chip planner">Planner</div>
       </div>
     </section>
 
@@ -78,6 +79,45 @@
         <span>GPU</span>
         <div class="metric-bar-wrap"><div class="metric-bar gpu" id="metricGPU" style="width:0%"></div></div>
         <strong id="metricGPUpct">—</strong>
+      </div>
+    </section>
+
+    <!-- Analytics card — spans all columns -->
+    <section class="card analytics-card">
+      <h3>Platform Analytics <button class="btn-sm" id="btnRefreshAnalytics">↻</button></h3>
+      <div class="analytics-grid">
+        <div class="analytic-stat">
+          <div class="analytic-num" id="anaTasksTotal">—</div>
+          <div class="analytic-label">Total Tasks</div>
+        </div>
+        <div class="analytic-stat">
+          <div class="analytic-num" id="anaTasksDone">—</div>
+          <div class="analytic-label">Completed</div>
+        </div>
+        <div class="analytic-stat">
+          <div class="analytic-num" id="anaMemCount">—</div>
+          <div class="analytic-label">Memories</div>
+        </div>
+        <div class="analytic-stat">
+          <div class="analytic-num" id="anaKBCount">—</div>
+          <div class="analytic-label">KB Chunks</div>
+        </div>
+        <div class="analytic-stat">
+          <div class="analytic-num" id="anaArtCount">—</div>
+          <div class="analytic-label">Artifacts</div>
+        </div>
+        <div class="analytic-stat">
+          <div class="analytic-num" id="anaArtSize">—</div>
+          <div class="analytic-label">Artifact Size</div>
+        </div>
+        <div class="analytic-stat">
+          <div class="analytic-num" id="anaSchedJobs">—</div>
+          <div class="analytic-label">Sched. Jobs</div>
+        </div>
+        <div class="analytic-stat">
+          <div class="analytic-num" id="anaTopAgent">—</div>
+          <div class="analytic-label">Top Agent</div>
+        </div>
       </div>
     </section>
   </main>
@@ -151,6 +191,15 @@
     </div>
   </div>
 
+  <!-- Workspace tabs: Files | Artifacts | Run Code -->
+  <div class="ws-tabs">
+    <button class="ws-tab active" data-wstab="files">Files</button>
+    <button class="ws-tab" data-wstab="artifacts">Artifacts</button>
+    <button class="ws-tab" data-wstab="runcode">Run Code</button>
+  </div>
+
+  <!-- ── Files tab ── -->
+  <div id="wsTabFiles">
   <!-- Build panel -->
   <div class="build-panel">
     <h4>⚡ Build a Project</h4>
@@ -187,6 +236,50 @@
 
   <!-- Project list -->
   <div class="project-list" id="projectList"></div>
+  </div><!-- end wsTabFiles -->
+
+  <!-- ── Artifacts tab ── -->
+  <div id="wsTabArtifacts" class="hidden">
+    <div class="ws-tab-toolbar">
+      <select id="artifactFilterType" class="model-select" style="font-size:11px">
+        <option value="">All types</option>
+        <option value="code">Code</option>
+        <option value="data">Data</option>
+        <option value="image">Image</option>
+        <option value="document">Document</option>
+        <option value="model">Model</option>
+        <option value="archive">Archive</option>
+      </select>
+      <button class="btn-sm" id="btnArtScan">⟳ Scan</button>
+      <button class="btn-sm" id="btnArtRefresh">↻</button>
+    </div>
+    <div class="artifact-list" id="artifactList"></div>
+  </div>
+
+  <!-- ── Run Code tab ── -->
+  <div id="wsTabRunCode" class="hidden">
+    <div class="run-code-panel">
+      <div class="run-code-header">
+        <select id="codeLang" class="model-select" style="font-size:11px;width:110px">
+          <option value="python">Python</option>
+          <option value="javascript">JavaScript</option>
+          <option value="bash">Bash</option>
+          <option value="ruby">Ruby</option>
+          <option value="go">Go</option>
+          <option value="typescript">TypeScript</option>
+        </select>
+        <input id="codeTimeout" type="number" value="30" min="5" max="300"
+               style="width:54px" title="Timeout (seconds)" />
+        <span style="font-size:11px;color:var(--text2)">s</span>
+        <button class="btn-sm accent" id="btnRunCode">▶ Run</button>
+        <button class="btn-sm" id="btnClearCodeOutput">Clear</button>
+      </div>
+      <textarea id="codeInput" class="code-editor"
+                placeholder="# Write code here…&#10;print('Hello, AI Admin!')" rows="7"
+                spellcheck="false"></textarea>
+      <div id="codeOutput" class="code-output"></div>
+    </div>
+  </div>
 
   <!-- Git panel -->
   <div class="git-panel">

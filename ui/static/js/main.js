@@ -666,6 +666,44 @@ function init() {
   $('btnSchedRefresh').onclick   = loadSchedulerJobs;
   $('btnSchedAdd').onclick       = addSchedulerJob;
 
+  // Workspace tabs
+  document.querySelectorAll('.ws-tab').forEach(tab => {
+    tab.onclick = () => {
+      document.querySelectorAll('.ws-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const which = tab.dataset.wstab;
+      $('wsTabFiles').classList.toggle('hidden',     which !== 'files');
+      $('wsTabArtifacts').classList.toggle('hidden', which !== 'artifacts');
+      $('wsTabRunCode').classList.toggle('hidden',   which !== 'runcode');
+      if (which === 'artifacts') loadArtifacts();
+    };
+  });
+
+  // Artifacts
+  $('btnArtRefresh').onclick = loadArtifacts;
+  $('btnArtScan').onclick    = async () => {
+    $('btnArtScan').textContent = '…';
+    try {
+      const res  = await fetch('/api/artifacts/scan', { method: 'POST' });
+      const data = await res.json();
+      $('btnArtScan').textContent = `⟳ Scan (${data.added} added)`;
+      loadArtifacts();
+    } catch { $('btnArtScan').textContent = '⟳ Scan'; }
+  };
+  $('artifactFilterType').onchange = loadArtifacts;
+
+  // Run Code
+  $('btnRunCode').onclick       = runCodePanel;
+  $('btnClearCodeOutput').onclick = () => { $('codeOutput').innerHTML = ''; };
+  $('codeInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runCodePanel(); }
+  });
+
+  // Analytics
+  $('btnRefreshAnalytics').onclick = loadAnalytics;
+  loadAnalytics();
+  setInterval(loadAnalytics, 30000);
+
   // Git panel (workspace)
   $('btnGitRefresh').onclick = () => {
     const proj = $('gitProjectSelect').value;
@@ -957,6 +995,7 @@ function startBuild() {
       populateTermCwd();
       refreshGitProjects();
       notify('Build Complete', 'Your project has been built successfully.');
+      loadAnalytics();
     } else if (ev.type === 'error') {
       appendBuildLog('error', `✗ ${ev.message}`);
     }
@@ -1558,3 +1597,135 @@ function useKBEntry(text) {
 
 window.deleteKBEntry = deleteKBEntry;
 window.useKBEntry    = useKBEntry;
+
+// ─── Analytics card ───────────────────────────────────────────────────────────
+async function loadAnalytics() {
+  try {
+    const res  = await fetch('/api/analytics');
+    const data = await res.json();
+
+    const set = (id, val) => { const el = $(id); if (el) el.textContent = val; };
+
+    set('anaTasksTotal', data.tasks?.total ?? '—');
+    set('anaTasksDone',  data.tasks?.by_status?.completed ?? 0);
+    set('anaMemCount',   data.memory?.count ?? '—');
+    set('anaKBCount',    data.kb?.count ?? '—');
+    set('anaArtCount',   data.artifacts?.total ?? '—');
+    set('anaArtSize',    fmtBytes(data.artifacts?.total_bytes ?? 0));
+    set('anaSchedJobs',  data.scheduler?.jobs ?? '—');
+
+    const byAgent = data.tasks?.by_agent || {};
+    const topAgent = Object.entries(byAgent).sort((a, b) => b[1] - a[1])[0];
+    set('anaTopAgent', topAgent ? `${topAgent[0]} (${topAgent[1]})` : '—');
+  } catch {}
+}
+
+// ─── Artifacts panel ─────────────────────────────────────────────────────────
+const _artTypeIcon = {
+  code: '💻', image: '🖼', data: '📊', document: '📄',
+  model: '🧠', archive: '📦', other: '📎',
+};
+
+async function loadArtifacts() {
+  const list = $('artifactList');
+  if (!list) return;
+  list.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px">Loading…</div>';
+  const ftype = $('artifactFilterType')?.value || '';
+  try {
+    const url  = `/api/artifacts${ftype ? `?file_type=${ftype}` : ''}`;
+    const res  = await fetch(url);
+    const data = await res.json();
+    const arts = data.artifacts || [];
+    list.innerHTML = '';
+    if (!arts.length) {
+      list.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px">No artifacts recorded. Click Scan to discover workspace files.</div>';
+      return;
+    }
+    arts.forEach(a => {
+      const div  = document.createElement('div');
+      div.className = 'artifact-item';
+      const icon = _artTypeIcon[a.file_type] || '📎';
+      div.innerHTML = `
+        <span class="artifact-icon">${icon}</span>
+        <div class="artifact-info">
+          <div class="artifact-name" title="${a.path}">${a.filename}</div>
+          <div class="artifact-meta">
+            <span>${a.agent}</span>
+            <span>${fmtBytes(a.size_bytes)}</span>
+            <span>${a.file_type}</span>
+            <span>${a.created_at ? new Date(a.created_at).toLocaleDateString() : ''}</span>
+          </div>
+        </div>
+        <span class="artifact-del" title="Remove record" onclick="deleteArtifact('${a.artifact_id}')">✕</span>`;
+      // Click opens file viewer for text files
+      div.querySelector('.artifact-info').onclick = () => {
+        openFileViewer(a.path);
+        document.querySelectorAll('.ws-tab').forEach(t =>
+          t.classList.toggle('active', t.dataset.wstab === 'files')
+        );
+        $('wsTabFiles').classList.remove('hidden');
+        $('wsTabArtifacts').classList.add('hidden');
+        $('wsTabRunCode').classList.add('hidden');
+      };
+      list.appendChild(div);
+    });
+  } catch (err) {
+    list.innerHTML = `<div style="color:var(--accent3);font-size:12px">${err.message}</div>`;
+  }
+}
+
+async function deleteArtifact(id) {
+  await fetch(`/api/artifacts/${id}`, { method: 'DELETE' });
+  loadArtifacts();
+}
+
+// ─── Streaming code runner ────────────────────────────────────────────────────
+let _wsCode = null;
+
+function runCodePanel() {
+  const code    = $('codeInput').value;
+  const lang    = $('codeLang')?.value || 'python';
+  const timeout = parseInt($('codeTimeout')?.value || '30', 10);
+  if (!code.trim()) return;
+
+  const out = $('codeOutput');
+  out.innerHTML = '';
+
+  if (_wsCode) { try { _wsCode.close(); } catch {} }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  _wsCode     = new WebSocket(`${proto}://${location.host}/ws/code`);
+
+  _wsCode.onopen = () => {
+    _wsCode.send(JSON.stringify({ code, language: lang, timeout }));
+  };
+
+  _wsCode.onmessage = ({ data }) => {
+    const ev  = JSON.parse(data);
+    const div = document.createElement('div');
+    if (ev.type === 'start') {
+      div.className   = 'code-out-start';
+      div.textContent = `▶ Running ${ev.language}…`;
+    } else if (ev.type === 'output') {
+      div.className   = 'code-out-line';
+      div.textContent = ev.text;
+    } else if (ev.type === 'error') {
+      div.className   = 'code-out-error';
+      div.textContent = ev.text;
+    } else if (ev.type === 'exit') {
+      div.className   = ev.code === 0 ? 'code-out-exit-0' : 'code-out-exit-1';
+      div.textContent = `[exit ${ev.code}  ${ev.duration_ms}ms]`;
+      loadAnalytics();
+    }
+    out.appendChild(div);
+    out.scrollTop = out.scrollHeight;
+  };
+
+  _wsCode.onerror = () => {
+    const div = document.createElement('div');
+    div.className   = 'code-out-error';
+    div.textContent = '✗ WebSocket error — is the server running?';
+    out.appendChild(div);
+  };
+}
+
+window.deleteArtifact = deleteArtifact;

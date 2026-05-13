@@ -290,6 +290,57 @@ textarea:focus { outline:none; border-color:var(--accent); }
              background:rgba(108,99,255,.06); }
 .agent-chip.project { color:#f472b6; border-color:#f472b633; background:#f472b611; }
 
+/* ═══════════════════════ ANALYTICS CARD ═══════════════════════ */
+.analytics-card { grid-column: 1 / -1; }
+.analytics-grid { display:flex; flex-wrap:wrap; gap:16px; }
+.analytic-stat { display:flex; flex-direction:column; align-items:center;
+                 background:var(--bg3); border-radius:10px; padding:14px 20px;
+                 min-width:90px; flex:1; }
+.analytic-num  { font-size:26px; font-weight:700;
+                 background:linear-gradient(135deg, var(--accent), var(--accent2));
+                 -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+.analytic-label { font-size:11px; color:var(--text2); margin-top:4px; text-align:center; }
+
+/* ═══════════════════════ WORKSPACE TABS ═══════════════════════ */
+.ws-tabs { display:flex; border-bottom:1px solid var(--border); padding:0 12px; }
+.ws-tab  { padding:7px 14px; font-size:12px; font-weight:600; color:var(--text2);
+           background:none; border:none; cursor:pointer; transition:.15s;
+           border-bottom:2px solid transparent; }
+.ws-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.ws-tab:hover:not(.active) { color:var(--text); }
+.ws-tab-toolbar { display:flex; align-items:center; gap:6px; padding:6px 12px;
+                  border-bottom:1px solid var(--border); }
+
+/* ═══════════════════════ ARTIFACTS ═══════════════════════ */
+.artifact-list { flex:1; overflow-y:auto; padding:6px 8px;
+                 max-height:280px; display:flex; flex-direction:column; gap:4px; }
+.artifact-item { display:flex; align-items:center; gap:8px; padding:6px 8px;
+                 background:var(--bg3); border-radius:7px; font-size:12px; }
+.artifact-icon { font-size:16px; flex-shrink:0; }
+.artifact-info { flex:1; overflow:hidden; }
+.artifact-name { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.artifact-meta { color:var(--text2); font-size:10px; display:flex; gap:6px; margin-top:2px; }
+.artifact-del  { color:var(--accent3); cursor:pointer; font-size:12px; flex-shrink:0; }
+.artifact-del:hover { text-decoration:underline; }
+
+/* ═══════════════════════ RUN CODE ═══════════════════════ */
+.run-code-panel { display:flex; flex-direction:column; gap:6px; padding:8px 10px; }
+.run-code-header { display:flex; align-items:center; gap:6px; }
+.code-editor { width:100%; background:#0a0c10; border:1px solid var(--border);
+               color:#e6edf3; border-radius:8px; padding:10px 12px;
+               font-family:'Cascadia Code','Consolas',monospace; font-size:12px;
+               resize:vertical; min-height:120px; line-height:1.5; }
+.code-editor:focus { outline:none; border-color:var(--accent); }
+.code-output { background:#0a0c10; border:1px solid var(--border); border-radius:6px;
+               padding:8px 12px; font-family:'Cascadia Code','Consolas',monospace;
+               font-size:12px; min-height:60px; max-height:180px; overflow-y:auto;
+               color:#c9d1d9; white-space:pre-wrap; word-break:break-all; }
+.code-out-line   { color:#c9d1d9; }
+.code-out-error  { color:#ff7b72; }
+.code-out-exit-0 { color:#3fb950; font-size:11px; }
+.code-out-exit-1 { color:#f85149; font-size:11px; }
+.code-out-start  { color:#79c0ff; }
+
 /* ═══════════════════════ MEMORY TABS ═══════════════════════ */
 .mem-tabs { display:flex; border-bottom:1px solid var(--border); }
 .mem-tab { flex:1; padding:7px 0; font-size:12px; font-weight:600; color:var(--text2);
