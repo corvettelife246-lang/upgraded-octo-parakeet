@@ -1,0 +1,78 @@
+agents:
+  admin:
+    name: "Admin Agent"
+    description: "Orchestrates all other agents, handles system administration, task routing, and autonomous decision-making"
+    model: "claude-opus-4-7"
+    capabilities:
+      - task_routing
+      - agent_management
+      - system_monitoring
+      - autonomous_execution
+    max_tokens: 4096
+
+  code:
+    name: "Code Agent"
+    description: "Writes, reviews, debugs, and executes code across multiple languages"
+    model: "claude-opus-4-7"
+    capabilities:
+      - code_generation
+      - code_review
+      - debugging
+      - execution
+      - refactoring
+    languages:
+      - python
+      - javascript
+      - typescript
+      - bash
+      - c
+      - cpp
+      - rust
+      - go
+    max_tokens: 8192
+
+  research:
+    name: "Research Agent"
+    description: "Deep research, information gathering, summarization, and knowledge synthesis"
+    model: "claude-opus-4-7"
+    capabilities:
+      - web_search
+      - summarization
+      - knowledge_synthesis
+      - fact_checking
+    max_tokens: 4096
+
+  reasoning:
+    name: "Reasoning Agent"
+    description: "Extended thinking and multi-step reasoning for complex problem solving"
+    model: "claude-opus-4-7"
+    capabilities:
+      - chain_of_thought
+      - mathematical_reasoning
+      - logical_inference
+      - planning
+    max_tokens: 16000
+    thinking_budget: 10000
+
+  ml:
+    name: "ML Agent"
+    description: "Machine learning model design, training pipelines, and data analysis"
+    model: "claude-opus-4-7"
+    capabilities:
+      - model_design
+      - training_pipeline
+      - data_analysis
+      - evaluation
+      - hyperparameter_tuning
+    max_tokens: 8192
+
+  vision:
+    name: "Vision Agent"
+    description: "Processes images and video frames for analysis, OCR, and object detection"
+    model: "claude-opus-4-7"
+    capabilities:
+      - image_analysis
+      - ocr
+      - object_detection
+      - scene_understanding
+    max_tokens: 2048
