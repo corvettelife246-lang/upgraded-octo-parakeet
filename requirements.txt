@@ -46,6 +46,13 @@ pypdf>=4.2.0
 python-docx>=1.1.2
 openpyxl>=3.1.2
 
+# ─── System monitoring ──────────────────────────────────────────
+psutil>=5.9.0
+nvidia-ml-py3>=12.0.0          # optional — NVIDIA GPU metrics
+
+# ─── Task scheduler ─────────────────────────────────────────────
+apscheduler>=3.10.0
+
 # ─── Utilities ───────────────────────────────────────────────────
 pyyaml>=6.0.1
 python-dotenv>=1.0.1

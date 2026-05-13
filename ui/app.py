@@ -49,11 +49,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger(__name__)
 
 
+async def _run_scheduled_task(prompt: str, agent: str) -> str:
+    """Callback used by the scheduler to run an agent task."""
+    if agent in _agents:
+        return await _agents[agent].run(prompt, context={})
+    return await agent_manager.route(prompt, context={})
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from core.health_check import print_banner
+    from core.scheduler import get_scheduler
     await print_banner()
+    sched = get_scheduler()
+    sched.set_agent_fn(_run_scheduled_task)
+    sched.start()
     yield
+    sched.shutdown()
 
 # ------------------------------------------------------------------
 # App bootstrap
@@ -628,6 +640,156 @@ async def websocket_terminal(ws: WebSocket):
                 await ws.send_text(json.dumps({"type": "error", "text": str(exc)}))
     except WebSocketDisconnect:
         pass
+
+
+# ------------------------------------------------------------------
+# Real-time system monitor WebSocket
+# ------------------------------------------------------------------
+@app.websocket("/ws/monitor")
+async def websocket_monitor(ws: WebSocket):
+    """Stream system metrics (CPU/RAM/disk/GPU/net) every 2 s."""
+    await ws.accept()
+    try:
+        from core.monitor import metrics_stream
+        async for metrics in metrics_stream(interval=2.0):
+            await ws.send_text(json.dumps(metrics, default=str))
+    except WebSocketDisconnect:
+        pass
+
+
+# ------------------------------------------------------------------
+# Scheduler API
+# ------------------------------------------------------------------
+class SchedulerJobRequest(BaseModel):
+    name: str
+    agent: str
+    prompt: str
+    trigger: str           # "interval" | "cron" | "date"
+    trigger_args: dict
+
+
+@app.get("/api/scheduler/jobs")
+async def scheduler_list_jobs():
+    from core.scheduler import get_scheduler
+    return {"jobs": get_scheduler().list_jobs()}
+
+
+@app.post("/api/scheduler/jobs")
+async def scheduler_add_job(req: SchedulerJobRequest):
+    from core.scheduler import get_scheduler
+    job = get_scheduler().add_job(
+        name=req.name, agent=req.agent, prompt=req.prompt,
+        trigger=req.trigger, trigger_args=req.trigger_args,
+    )
+    return job.to_dict()
+
+
+@app.delete("/api/scheduler/jobs/{job_id}")
+async def scheduler_remove_job(job_id: str):
+    from core.scheduler import get_scheduler
+    ok = get_scheduler().remove_job(job_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"status": "removed"}
+
+
+@app.post("/api/scheduler/jobs/{job_id}/toggle")
+async def scheduler_toggle_job(job_id: str):
+    from core.scheduler import get_scheduler
+    enabled = get_scheduler().toggle_job(job_id)
+    if enabled is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"job_id": job_id, "enabled": enabled}
+
+
+# ------------------------------------------------------------------
+# Git API
+# ------------------------------------------------------------------
+class GitCommitRequest(BaseModel):
+    message: str
+
+
+class GitPushRequest(BaseModel):
+    remote: str = "origin"
+    branch: str = ""
+
+
+class GitBranchRequest(BaseModel):
+    name: str
+    checkout: bool = True
+
+
+class GitInitRequest(BaseModel):
+    initial_branch: str = "main"
+
+
+class GitRemoteRequest(BaseModel):
+    name: str
+    url: str
+
+
+class GitAddRequest(BaseModel):
+    paths: Optional[list[str]] = None
+
+
+@app.post("/api/git/{project}/init")
+async def git_init_ep(project: str, req: GitInitRequest):
+    from core.git_ops import git_init
+    return await git_init(project, initial_branch=req.initial_branch)
+
+
+@app.get("/api/git/{project}/summary")
+async def git_summary_ep(project: str):
+    from core.git_ops import git_summary
+    return await git_summary(project)
+
+
+@app.get("/api/git/{project}/status")
+async def git_status_ep(project: str):
+    from core.git_ops import git_status
+    return await git_status(project)
+
+
+@app.get("/api/git/{project}/diff")
+async def git_diff_ep(project: str, staged: bool = False):
+    from core.git_ops import git_diff
+    return await git_diff(project, staged=staged)
+
+
+@app.get("/api/git/{project}/log")
+async def git_log_ep(project: str, n: int = 10):
+    from core.git_ops import git_log
+    return await git_log(project, n=n)
+
+
+@app.post("/api/git/{project}/add")
+async def git_add_ep(project: str, req: GitAddRequest):
+    from core.git_ops import git_add
+    return await git_add(project, paths=req.paths)
+
+
+@app.post("/api/git/{project}/commit")
+async def git_commit_ep(project: str, req: GitCommitRequest):
+    from core.git_ops import git_commit
+    return await git_commit(project, req.message)
+
+
+@app.post("/api/git/{project}/push")
+async def git_push_ep(project: str, req: GitPushRequest):
+    from core.git_ops import git_push
+    return await git_push(project, remote=req.remote, branch=req.branch)
+
+
+@app.post("/api/git/{project}/branch")
+async def git_branch_ep(project: str, req: GitBranchRequest):
+    from core.git_ops import git_branch
+    return await git_branch(project, name=req.name, checkout=req.checkout)
+
+
+@app.post("/api/git/{project}/remote")
+async def git_remote_ep(project: str, req: GitRemoteRequest):
+    from core.git_ops import git_remote_add
+    return await git_remote_add(project, name=req.name, url=req.url)
 
 
 # ------------------------------------------------------------------

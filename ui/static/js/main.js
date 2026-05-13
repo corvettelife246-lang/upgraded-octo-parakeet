@@ -368,6 +368,8 @@ function autoResizeTextarea() {
 }
 
 // ─── Task log polling ─────────────────────────────────────────────────────────
+const _seenTasks = new Set();
+
 async function refreshTasks() {
   try {
     const res  = await fetch('/api/tasks');
@@ -384,6 +386,12 @@ async function refreshTasks() {
                        </div>
                        <div style="font-size:10px;color:var(--text2)">${t.status}</div>`;
       log.appendChild(div);
+      // Notify on first time we see a completed task
+      if (t.status === 'completed' && !_seenTasks.has(t.task_id)) {
+        _seenTasks.add(t.task_id);
+        notify('Task Complete', `${t.agent_type} finished: ${t.prompt_preview || ''}`);
+      }
+      _seenTasks.add(t.task_id);
     });
   } catch {}
 }
@@ -411,6 +419,12 @@ function makeDraggable(popup, handle) {
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 function init() {
   connectWS();
+  connectMonitor();
+
+  // Request browser notification permission
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
 
   // FAB / open chat
   $('fabBtn').onclick = () => { chatPopup.classList.toggle('hidden'); };
@@ -620,13 +634,36 @@ function init() {
     }
   };
 
+  // Scheduler popup
+  $('btnOpenScheduler').onclick = () => {
+    $('schedulerPopup').classList.toggle('hidden');
+    if (!$('schedulerPopup').classList.contains('hidden')) loadSchedulerJobs();
+  };
+  $('btnCloseScheduler').onclick = () => $('schedulerPopup').classList.add('hidden');
+  $('btnSchedRefresh').onclick   = loadSchedulerJobs;
+  $('btnSchedAdd').onclick       = addSchedulerJob;
+
+  // Git panel (workspace)
+  $('btnGitRefresh').onclick = () => {
+    const proj = $('gitProjectSelect').value;
+    if (proj) loadGitSummary(proj);
+  };
+  $('btnGitInit').onclick   = gitInit;
+  $('btnGitCommit').onclick = gitCommit;
+  $('btnGitPush').onclick   = gitPush;
+  $('gitProjectSelect').onchange = () => {
+    const proj = $('gitProjectSelect').value;
+    if (proj) loadGitSummary(proj);
+  };
+
   // Draggable
-  makeDraggable(chatPopup,             $('chatPopupHeader'));
-  makeDraggable(videoPopup,            $('videoPopupHeader'));
-  makeDraggable($('settingsPopup'),    $('settingsPopupHeader'));
-  makeDraggable($('workspacePopup'),   $('workspacePopupHeader'));
-  makeDraggable($('terminalPopup'),    $('terminalPopupHeader'));
-  makeDraggable($('memoryPopup'),      $('memoryPopupHeader'));
+  makeDraggable(chatPopup,              $('chatPopupHeader'));
+  makeDraggable(videoPopup,             $('videoPopupHeader'));
+  makeDraggable($('settingsPopup'),     $('settingsPopupHeader'));
+  makeDraggable($('workspacePopup'),    $('workspacePopupHeader'));
+  makeDraggable($('terminalPopup'),     $('terminalPopupHeader'));
+  makeDraggable($('memoryPopup'),       $('memoryPopupHeader'));
+  makeDraggable($('schedulerPopup'),    $('schedulerPopupHeader'));
 
   // Load backend info into dashboard stats
   loadBackendInfo();
@@ -776,6 +813,7 @@ async function openWorkspace() {
   await refreshWorkspaceTree('.');
   await refreshProjects();
   populateTermCwd();
+  refreshGitProjects();
 }
 
 async function refreshWorkspaceTree(path = '.') {
@@ -893,6 +931,8 @@ function startBuild() {
       refreshWorkspaceTree('.');
       refreshProjects();
       populateTermCwd();
+      refreshGitProjects();
+      notify('Build Complete', 'Your project has been built successfully.');
     } else if (ev.type === 'error') {
       appendBuildLog('error', `✗ ${ev.message}`);
     }
@@ -1103,3 +1143,223 @@ window.copyCode         = copyCode;
 window.downloadProject  = downloadProject;
 window.deleteMemory     = deleteMemory;
 window.useMemory        = useMemory;
+
+// ─── Browser notifications ────────────────────────────────────────────────────
+function notify(title, body) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try { new Notification(title, { body }); } catch {}
+}
+
+// ─── System monitor WebSocket ─────────────────────────────────────────────────
+let _wsMonitor = null;
+
+function connectMonitor() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  _wsMonitor  = new WebSocket(`${proto}://${location.host}/ws/monitor`);
+  _wsMonitor.onmessage = ({ data }) => {
+    try { updateMetrics(JSON.parse(data)); } catch {}
+  };
+  _wsMonitor.onclose = () => setTimeout(connectMonitor, 5000);
+}
+
+function updateMetrics(m) {
+  setMetricBar('metricCPU',  'metricCPUpct',  m.cpu?.pct,          '%');
+  setMetricBar('metricRAM',  'metricRAMpct',  m.ram?.pct,          '%');
+  setMetricBar('metricDisk', 'metricDiskpct', m.disk?.pct,         '%');
+  const gpu = m.gpu?.[0];
+  if (gpu) {
+    const gpuRow = $('gpuRow');
+    if (gpuRow) gpuRow.style.display = '';
+    setMetricBar('metricGPU', 'metricGPUpct', gpu.util_pct, '%');
+  }
+}
+
+function setMetricBar(barId, pctId, value, unit) {
+  if (value == null) return;
+  const bar = $(barId);
+  const lbl = $(pctId);
+  if (bar) bar.style.width = Math.min(value, 100) + '%';
+  if (lbl) lbl.textContent = value.toFixed(0) + unit;
+  // Colour heat
+  if (bar) {
+    bar.style.background = value > 85 ? 'var(--accent3)' : value > 60 ? 'var(--orange)' : 'var(--accent)';
+  }
+}
+
+// ─── Scheduler ────────────────────────────────────────────────────────────────
+async function loadSchedulerJobs() {
+  const list = $('schedList');
+  if (!list) return;
+  list.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:4px">Loading…</div>';
+  try {
+    const res  = await fetch('/api/scheduler/jobs');
+    const data = await res.json();
+    list.innerHTML = '';
+    if (!data.jobs?.length) {
+      list.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:4px">No scheduled jobs.</div>';
+      return;
+    }
+    data.jobs.forEach(j => {
+      const div = document.createElement('div');
+      div.className = 'sched-item';
+      const lastRun = j.last_run ? new Date(j.last_run).toLocaleString() : 'never';
+      div.innerHTML = `
+        <div class="sched-name ${j.enabled ? 'sched-enabled' : 'sched-disabled'}">
+          ${j.enabled ? '▶' : '⏸'} ${j.name}
+        </div>
+        <div class="sched-meta">
+          <span>agent: ${j.agent}</span>
+          <span>trigger: ${j.trigger}</span>
+          <span>runs: ${j.run_count}</span>
+          <span>last: ${lastRun}</span>
+        </div>
+        <div class="sched-meta" style="color:var(--text);margin-top:2px">${j.prompt.slice(0,80)}${j.prompt.length>80?'…':''}</div>
+        <div class="sched-actions">
+          <button class="btn-sm" onclick="toggleSchedulerJob('${j.job_id}')">${j.enabled ? 'Pause' : 'Resume'}</button>
+          <button class="btn-sm danger" onclick="removeSchedulerJob('${j.job_id}')">✕ Remove</button>
+        </div>`;
+      list.appendChild(div);
+    });
+  } catch (e) {
+    list.innerHTML = `<div style="color:var(--accent3);font-size:12px">${e.message}</div>`;
+  }
+}
+
+async function addSchedulerJob() {
+  const name   = $('schedName').value.trim();
+  const agent  = $('schedAgent').value;
+  const prompt = $('schedPrompt').value.trim();
+  const trigger = $('schedTrigger').value;
+  const argsRaw = $('schedTriggerArgs').value.trim();
+  if (!name || !prompt || !argsRaw) { alert('Fill in name, prompt, and trigger args.'); return; }
+  let trigger_args;
+  try { trigger_args = JSON.parse(argsRaw); } catch { alert('Trigger args must be valid JSON, e.g. {"seconds":3600}'); return; }
+  try {
+    await fetch('/api/scheduler/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, agent, prompt, trigger, trigger_args }),
+    });
+    $('schedName').value = '';
+    $('schedPrompt').value = '';
+    $('schedTriggerArgs').value = '';
+    loadSchedulerJobs();
+  } catch (e) {
+    alert(`Failed to add job: ${e.message}`);
+  }
+}
+
+async function toggleSchedulerJob(jobId) {
+  await fetch(`/api/scheduler/jobs/${jobId}/toggle`, { method: 'POST' });
+  loadSchedulerJobs();
+}
+
+async function removeSchedulerJob(jobId) {
+  if (!confirm('Remove this scheduled job?')) return;
+  await fetch(`/api/scheduler/jobs/${jobId}`, { method: 'DELETE' });
+  loadSchedulerJobs();
+}
+
+// ─── Git panel ────────────────────────────────────────────────────────────────
+async function refreshGitProjects() {
+  const sel = $('gitProjectSelect');
+  if (!sel) return;
+  try {
+    const res  = await fetch('/api/workspace/projects');
+    const data = await res.json();
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— select project —</option>';
+    (data.projects || []).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.name; opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
+    if (prev) sel.value = prev;
+  } catch {}
+}
+
+async function loadGitSummary(project) {
+  const pre = $('gitSummary');
+  const status = $('gitStatus');
+  if (!pre) return;
+  pre.textContent = 'Loading…';
+  try {
+    const res  = await fetch(`/api/git/${encodeURIComponent(project)}/summary`);
+    const data = await res.json();
+    if (!data.initialized) {
+      pre.textContent = 'Not a git repo. Click Init to initialise.';
+      return;
+    }
+    pre.textContent = [
+      `branch: ${data.branch || '(none)'}`,
+      data.status ? `\nchanges:\n${data.status}` : '\nworking tree clean',
+      data.log    ? `\nrecent commits:\n${data.log}` : '',
+      data.remotes ? `\nremotes:\n${data.remotes}` : '',
+    ].join('');
+    if (status) status.textContent = '';
+  } catch (e) {
+    pre.textContent = `Error: ${e.message}`;
+  }
+}
+
+async function gitInit() {
+  const project = $('gitProjectSelect').value;
+  if (!project) { alert('Select a project first.'); return; }
+  const status = $('gitStatus');
+  try {
+    const res  = await fetch(`/api/git/${encodeURIComponent(project)}/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initial_branch: 'main' }),
+    });
+    const data = await res.json();
+    if (status) status.textContent = data.ok ? '✓ Repo initialised' : `✗ ${data.stderr}`;
+    loadGitSummary(project);
+  } catch (e) {
+    if (status) status.textContent = `✗ ${e.message}`;
+  }
+}
+
+async function gitCommit() {
+  const project = $('gitProjectSelect').value;
+  const msg     = $('gitCommitMsg').value.trim();
+  const status  = $('gitStatus');
+  if (!project) { alert('Select a project first.'); return; }
+  if (!msg)     { alert('Enter a commit message.'); return; }
+  try {
+    const res  = await fetch(`/api/git/${encodeURIComponent(project)}/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg }),
+    });
+    const data = await res.json();
+    if (status) status.textContent = data.ok ? `✓ Committed: ${msg}` : `✗ ${data.stderr}`;
+    $('gitCommitMsg').value = '';
+    loadGitSummary(project);
+    notify('Git Commit', `Committed to ${project}: ${msg}`);
+  } catch (e) {
+    if (status) status.textContent = `✗ ${e.message}`;
+  }
+}
+
+async function gitPush() {
+  const project = $('gitProjectSelect').value;
+  const status  = $('gitStatus');
+  if (!project) { alert('Select a project first.'); return; }
+  if (status) status.textContent = 'Pushing…';
+  try {
+    const res  = await fetch(`/api/git/${encodeURIComponent(project)}/push`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remote: 'origin', branch: '' }),
+    });
+    const data = await res.json();
+    if (status) status.textContent = data.ok ? '✓ Pushed' : `✗ ${data.stderr}`;
+    loadGitSummary(project);
+  } catch (e) {
+    if (status) status.textContent = `✗ ${e.message}`;
+  }
+}
+
+window.toggleSchedulerJob = toggleSchedulerJob;
+window.removeSchedulerJob = removeSchedulerJob;
