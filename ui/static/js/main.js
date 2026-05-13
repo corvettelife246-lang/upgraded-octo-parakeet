@@ -15,8 +15,10 @@ const state = {
   isRecording: false,
   cameraStream: null,
   pendingSnapshotB64: null,
+  pendingFileContent: null,
   currentMode: 'text',
   theme: 'dark',
+  sessionId: null,
 };
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -147,8 +149,13 @@ async function sendTextMessage() {
   state.chatHistory.push({ role: 'user', content: text });
 
   const agent = agentSelect.value;
+  let fullText = text;
+  if (state.pendingFileContent) {
+    fullText += state.pendingFileContent;
+    state.pendingFileContent = null;
+  }
   const payload = {
-    message: text,
+    message: fullText,
     agent,
     history: state.chatHistory.slice(-20),
   };
@@ -489,6 +496,85 @@ function init() {
   refreshTasks();
   setInterval(refreshTasks, 10000);
 
+  // Workspace popup
+  $('btnOpenWorkspace').onclick = () => {
+    $('workspacePopup').classList.toggle('hidden');
+    if (!$('workspacePopup').classList.contains('hidden')) openWorkspace();
+  };
+  $('btnCloseWorkspace').onclick = () => $('workspacePopup').classList.add('hidden');
+  $('btnWorkspaceRefresh').onclick = () => refreshWorkspaceTree('.');
+  $('btnBuild').onclick = startBuild;
+  $('btnCloseFileViewer').onclick = () => $('fileViewer').classList.add('hidden');
+  $('btnCopyFile').onclick = () => {
+    const txt = $('fileViewerContent').textContent;
+    navigator.clipboard.writeText(txt).catch(()=>{});
+  };
+  $('btnSendFileToChat').onclick = () => {
+    const path    = $('fileViewer')._currentPath || '';
+    const content = $('fileViewerContent').textContent;
+    state.pendingFileContent = `\n\n--- File: ${path} ---\n${content}\n---`;
+    appendMessage('user', `📎 Attached: ${path}`);
+    chatPopup.classList.remove('hidden');
+    $('workspacePopup').classList.add('hidden');
+  };
+
+  // Workspace file upload
+  $('wsUploadInput').onchange = async (e) => {
+    for (const f of e.target.files) {
+      const form = new FormData();
+      form.append('file', f);
+      form.append('dest_path', '.');
+      await fetch('/api/workspace/upload', { method: 'POST', body: form });
+    }
+    refreshWorkspaceTree('.');
+  };
+
+  // Terminal popup
+  $('btnOpenTerminal').onclick = () => {
+    $('terminalPopup').classList.toggle('hidden');
+    if (!$('terminalPopup').classList.contains('hidden')) {
+      connectTerminal();
+      populateTermCwd();
+      $('termInput').focus();
+    }
+  };
+  $('btnCloseTerminal').onclick = () => $('terminalPopup').classList.add('hidden');
+  $('btnClearTerm').onclick = () => { $('termOutput').innerHTML = ''; };
+  $('termInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const cmd = $('termInput').value.trim();
+      if (cmd) {
+        _termHistory.unshift(cmd);
+        _termHistIdx = -1;
+        sendTermCmd(cmd);
+        $('termInput').value = '';
+      }
+    } else if (e.key === 'ArrowUp') {
+      _termHistIdx = Math.min(_termHistIdx + 1, _termHistory.length - 1);
+      $('termInput').value = _termHistory[_termHistIdx] || '';
+      e.preventDefault();
+    } else if (e.key === 'ArrowDown') {
+      _termHistIdx = Math.max(_termHistIdx - 1, -1);
+      $('termInput').value = _termHistIdx >= 0 ? _termHistory[_termHistIdx] : '';
+      e.preventDefault();
+    }
+  });
+
+  // Chat file attach
+  $('chatFileInput').onchange = async (e) => {
+    for (const f of e.target.files) await uploadFileToChat(f);
+    e.target.value = '';
+  };
+
+  // Drag-to-drop on chat popup
+  chatPopup.addEventListener('dragover', e => { e.preventDefault(); $('dropZone').classList.remove('hidden'); });
+  chatPopup.addEventListener('dragleave', () => $('dropZone').classList.add('hidden'));
+  chatPopup.addEventListener('drop', async e => {
+    e.preventDefault();
+    $('dropZone').classList.add('hidden');
+    for (const f of e.dataTransfer.files) await uploadFileToChat(f);
+  });
+
   // Settings popup
   $('btnOpenSettings').onclick = () => {
     $('settingsPopup').classList.toggle('hidden');
@@ -511,9 +597,11 @@ function init() {
   };
 
   // Draggable
-  makeDraggable(chatPopup,      $('chatPopupHeader'));
-  makeDraggable(videoPopup,     $('videoPopupHeader'));
-  makeDraggable($('settingsPopup'), $('settingsPopupHeader'));
+  makeDraggable(chatPopup,             $('chatPopupHeader'));
+  makeDraggable(videoPopup,            $('videoPopupHeader'));
+  makeDraggable($('settingsPopup'),    $('settingsPopupHeader'));
+  makeDraggable($('workspacePopup'),   $('workspacePopupHeader'));
+  makeDraggable($('terminalPopup'),    $('terminalPopupHeader'));
 
   // Load backend info into dashboard stats
   loadBackendInfo();
@@ -540,6 +628,204 @@ function switchToTextMode() {
   $('voiceMode').classList.add('hidden');
   $('videoMode').classList.add('hidden');
   state.currentMode = 'text';
+}
+
+// ─── Workspace ────────────────────────────────────────────────────────────────
+let _wsTerminal = null;
+let _wsBuild    = null;
+let _termHistory = [];
+let _termHistIdx = -1;
+
+async function openWorkspace() {
+  $('workspacePopup').classList.remove('hidden');
+  await refreshWorkspaceTree('.');
+  await refreshProjects();
+  populateTermCwd();
+}
+
+async function refreshWorkspaceTree(path = '.') {
+  const tree = $('workspaceTree');
+  tree.innerHTML = '<div style="padding:8px;color:var(--text2);font-size:12px">Loading…</div>';
+  try {
+    const res  = await fetch(`/api/workspace/tree?path=${encodeURIComponent(path)}`);
+    const data = await res.json();
+    tree.innerHTML = '';
+    if (path !== '.') {
+      const up = document.createElement('div');
+      up.className = 'tree-item';
+      up.innerHTML = '<span class="icon">↑</span><span class="name">..</span>';
+      up.onclick = () => refreshWorkspaceTree(path.split('/').slice(0,-1).join('/') || '.');
+      tree.appendChild(up);
+    }
+    (data.entries || []).forEach(e => {
+      const div = document.createElement('div');
+      div.className = 'tree-item';
+      div.innerHTML = `<span class="icon">${e.type==='dir'?'📁':'📄'}</span>
+                       <span class="name">${e.name}</span>
+                       <span class="size">${e.size!=null ? fmtBytes(e.size) : ''}</span>`;
+      if (e.type === 'dir') {
+        div.onclick = () => refreshWorkspaceTree(`${path}/${e.name}`.replace(/^\.\//,''));
+      } else {
+        div.onclick = () => openFileViewer(`${path}/${e.name}`.replace(/^\.\//,''));
+      }
+      tree.appendChild(div);
+    });
+    if (!data.entries?.length) tree.innerHTML = '<div style="padding:8px;color:var(--text2);font-size:12px">Empty</div>';
+  } catch (e) {
+    tree.innerHTML = `<div style="padding:8px;color:var(--accent3);font-size:12px">Error: ${e.message}</div>`;
+  }
+}
+
+async function openFileViewer(path) {
+  try {
+    const res  = await fetch(`/api/workspace/read?path=${encodeURIComponent(path)}`);
+    const data = await res.json();
+    $('fileViewerPath').textContent = path;
+    $('fileViewerContent').textContent = data.content || '';
+    $('fileViewer').classList.remove('hidden');
+    $('fileViewer')._currentPath = path;
+  } catch {}
+}
+
+async function refreshProjects() {
+  const list = $('projectList');
+  try {
+    const res   = await fetch('/api/workspace/projects');
+    const data  = await res.json();
+    list.innerHTML = '';
+    if (!data.projects?.length) { list.innerHTML = '<div style="font-size:11px;color:var(--text2);padding:6px">No projects yet.</div>'; return; }
+    data.projects.forEach(p => {
+      const div = document.createElement('div');
+      div.className = 'project-item';
+      div.innerHTML = `<span>📦 ${p.name}</span>
+                       <span style="color:var(--text2);font-size:11px">${p.files} files</span>
+                       <span class="dl-btn" onclick="downloadProject('${p.name}')">⬇ ZIP</span>`;
+      div.querySelector('span:first-child').onclick = () => refreshWorkspaceTree(p.name);
+      list.appendChild(div);
+    });
+  } catch {}
+}
+
+function downloadProject(name) {
+  const a = document.createElement('a');
+  a.href = `/api/workspace/download/${encodeURIComponent(name)}`;
+  a.download = `${name}.zip`;
+  a.click();
+}
+
+function populateTermCwd() {
+  const sel = $('termCwd');
+  if (!sel) return;
+  fetch('/api/workspace/projects').then(r=>r.json()).then(data => {
+    sel.innerHTML = '<option value=".">workspace root</option>';
+    (data.projects||[]).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.name; opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
+  }).catch(()=>{});
+}
+
+// ─── Build ────────────────────────────────────────────────────────────────────
+function startBuild() {
+  const desc = $('buildDesc').value.trim();
+  const name = $('buildName').value.trim() || undefined;
+  if (!desc) return;
+
+  const log = $('buildLog');
+  log.innerHTML = '';
+  log.classList.remove('hidden');
+
+  if (_wsBuild) { try { _wsBuild.close(); } catch {} }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  _wsBuild = new WebSocket(`${proto}://${location.host}/ws/build`);
+
+  _wsBuild.onopen = () => {
+    _wsBuild.send(JSON.stringify({ description: desc, project_name: name }));
+    appendBuildLog('info', `Building: ${desc}…`);
+  };
+  _wsBuild.onmessage = ({ data }) => {
+    const ev = JSON.parse(data);
+    if (ev.type === 'tool_call') {
+      appendBuildLog('tool', `🔧 ${ev.tool}(${JSON.stringify(ev.inputs).slice(0,60)}…)`);
+    } else if (ev.type === 'tool_result') {
+      const ok = ev.result?.ok !== false;
+      appendBuildLog(ok ? 'result' : 'error', ok ? `✓ ${ev.tool}` : `✗ ${ev.tool}: ${ev.result?.error}`);
+    } else if (ev.type === 'step_done') {
+      appendBuildLog('result', `✅ Step done`);
+    } else if (ev.type === 'build_complete') {
+      appendBuildLog('result', '🎉 Build complete!');
+      refreshWorkspaceTree('.');
+      refreshProjects();
+      populateTermCwd();
+    } else if (ev.type === 'error') {
+      appendBuildLog('error', `✗ ${ev.message}`);
+    }
+  };
+  _wsBuild.onerror = () => appendBuildLog('error', 'Build connection error');
+}
+
+function appendBuildLog(cls, text) {
+  const log = $('buildLog');
+  const div = document.createElement('div');
+  div.className = `log-${cls}`;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function fmtBytes(b) {
+  if (b < 1024) return `${b}B`;
+  if (b < 1048576) return `${(b/1024).toFixed(1)}K`;
+  return `${(b/1048576).toFixed(1)}M`;
+}
+
+// ─── Terminal ─────────────────────────────────────────────────────────────────
+function connectTerminal() {
+  if (_wsTerminal?.readyState === WebSocket.OPEN) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  _wsTerminal = new WebSocket(`${proto}://${location.host}/ws/terminal`);
+  _wsTerminal.onclose = () => { _wsTerminal = null; };
+  _wsTerminal.onmessage = ({ data }) => {
+    const ev = JSON.parse(data);
+    const out = $('termOutput');
+    const line = document.createElement('div');
+    if (ev.type === 'cmd')    { line.className = 'term-line cmd';    line.textContent = ev.text; }
+    else if (ev.type === 'output') { line.className = 'term-line';   line.textContent = ev.text; }
+    else if (ev.type === 'error')  { line.className = 'term-line error'; line.textContent = `✗ ${ev.text}`; }
+    else if (ev.type === 'exit')   { line.className = `term-line exit-${ev.code}`; line.textContent = `[exit ${ev.code}]`; }
+    out.appendChild(line);
+    out.scrollTop = out.scrollHeight;
+  };
+}
+
+function sendTermCmd(cmd) {
+  const cwd = $('termCwd')?.value || '.';
+  if (!_wsTerminal || _wsTerminal.readyState !== WebSocket.OPEN) {
+    connectTerminal();
+    setTimeout(() => sendTermCmd(cmd), 300);
+    return;
+  }
+  _wsTerminal.send(JSON.stringify({ cmd, cwd }));
+}
+
+// ─── File upload to chat ──────────────────────────────────────────────────────
+async function uploadFileToChat(file) {
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const res  = await fetch('/api/upload/chat', { method: 'POST', body: form });
+    const data = await res.json();
+    if (data.type === 'image') {
+      setSnapshotPreview(data.b64);
+      appendMessage('user', `📎 Attached image: ${data.filename}`);
+    } else {
+      state.pendingFileContent = `\n\n--- File: ${data.filename} ---\n${data.content}\n---`;
+      appendMessage('user', `📎 Attached: ${data.filename} (${fmtBytes(data.size || 0)})`);
+    }
+  } catch (e) {
+    appendMessage('ai', `⚠ Upload failed: ${e.message}`);
+  }
 }
 
 // ─── Backend / model info ─────────────────────────────────────────────────────
@@ -678,4 +964,5 @@ async function loadSessionHistory(id) {
 }
 
 window.addEventListener('DOMContentLoaded', init);
-window.copyCode = copyCode;
+window.copyCode         = copyCode;
+window.downloadProject  = downloadProject;

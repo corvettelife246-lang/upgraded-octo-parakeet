@@ -31,12 +31,14 @@ from pydantic import BaseModel
 from agents.admin_agent import AdminAgent
 from agents.code_agent import CodeAgent
 from agents.ml_agent import MLAgent
+from agents.project_agent import ProjectAgent
 from agents.reasoning_agent import ReasoningAgent
 from agents.research_agent import ResearchAgent
 from agents.vision_agent import VisionAgent
-from config.settings import BASE_DIR, FOUNDRY_LOCAL_MODEL, FOUNDRY_LOCAL_URL, HOST, LLM_BACKEND, PORT, SECRET_KEY
+from config.settings import BASE_DIR, FOUNDRY_LOCAL_MODEL, FOUNDRY_LOCAL_URL, HOST, LLM_BACKEND, PORT, SECRET_KEY, WORKSPACE_DIR
 from core.agent_manager import AgentManager
 from core.backend_router import backend as get_backend
+from core.tools import execute_tool, TOOL_DEFINITIONS
 from voice.voice_pipeline import VoicePipeline
 from vision.camera import Camera
 from vision.image_processor import ImageProcessor
@@ -74,12 +76,13 @@ image_proc = ImageProcessor()
 
 # Agent registry
 _agents = {
-    "admin": AdminAgent(agent_manager.llm),
-    "code": CodeAgent(agent_manager.llm),
+    "admin":    AdminAgent(agent_manager.llm),
+    "code":     CodeAgent(agent_manager.llm),
     "research": ResearchAgent(agent_manager.llm),
-    "reasoning": ReasoningAgent(agent_manager.llm),
-    "ml": MLAgent(agent_manager.llm),
-    "vision": VisionAgent(agent_manager.llm),
+    "reasoning":ReasoningAgent(agent_manager.llm),
+    "ml":       MLAgent(agent_manager.llm),
+    "vision":   VisionAgent(agent_manager.llm),
+    "project":  ProjectAgent(agent_manager.llm),
 }
 
 # WebSocket connection registry
@@ -453,6 +456,195 @@ async def websocket_video(ws: WebSocket):
             await ws.send_text(json.dumps({"type": "frame", "data": b64}))
     except WebSocketDisconnect:
         pass
+
+
+# ------------------------------------------------------------------
+# Workspace — file tree, read, write, delete, download ZIP
+# ------------------------------------------------------------------
+class FileWriteRequest(BaseModel):
+    path: str
+    content: str
+
+
+@app.get("/api/workspace/tree")
+async def workspace_tree(path: str = "."):
+    from core.tools import tool_list_dir
+    result = await tool_list_dir(path)
+    return result
+
+
+@app.get("/api/workspace/read")
+async def workspace_read(path: str):
+    from core.tools import tool_file_read
+    return await tool_file_read(path)
+
+
+@app.post("/api/workspace/write")
+async def workspace_write(req: FileWriteRequest):
+    from core.tools import tool_file_write
+    return await tool_file_write(req.path, req.content)
+
+
+@app.delete("/api/workspace/delete")
+async def workspace_delete(path: str):
+    from core.tools import tool_file_delete
+    return await tool_file_delete(path)
+
+
+@app.post("/api/workspace/upload")
+async def workspace_upload(
+    file: UploadFile = File(...),
+    dest_path: str = Form("."),
+):
+    from core.tools import _safe_path
+    dest = _safe_path(dest_path) / file.filename
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(await file.read())
+    return {"ok": True, "path": str(dest.relative_to(WORKSPACE_DIR))}
+
+
+@app.get("/api/workspace/download/{project_name}")
+async def workspace_download(project_name: str):
+    """Download a workspace project as a ZIP archive."""
+    import io
+    import zipfile
+    project_path = WORKSPACE_DIR / project_name
+    if not project_path.exists():
+        raise HTTPException(status_code=404, detail="Project not found")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in project_path.rglob("*"):
+            if f.is_file():
+                zf.write(f, f.relative_to(WORKSPACE_DIR))
+    buf.seek(0)
+    return Response(
+        content=buf.read(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{project_name}.zip"'},
+    )
+
+
+@app.get("/api/workspace/projects")
+async def list_projects():
+    proj_agent: ProjectAgent = _agents["project"]  # type: ignore
+    return {"projects": proj_agent.list_projects()}
+
+
+# ------------------------------------------------------------------
+# Project builder — stream build events over WebSocket
+# ------------------------------------------------------------------
+class BuildRequest(BaseModel):
+    description: str
+    project_name: Optional[str] = None
+
+
+@app.post("/api/build")
+async def build_project(req: BuildRequest):
+    """One-shot project build (non-streaming). Returns final result."""
+    proj_agent: ProjectAgent = _agents["project"]  # type: ignore
+    result = await proj_agent.run(req.description, project_name=req.project_name)
+    return {"result": result}
+
+
+@app.websocket("/ws/build")
+async def websocket_build(ws: WebSocket):
+    """
+    Real-time project build — stream tool calls and results as they happen.
+    Client sends: {"description": "...", "project_name": "..."}
+    Server streams: {"type": "tool_call"|"tool_result"|"step_done"|..., ...}
+    """
+    await ws.accept()
+    try:
+        raw  = await ws.receive_text()
+        data = json.loads(raw)
+        description  = data.get("description", "")
+        project_name = data.get("project_name")
+
+        if not description:
+            await ws.send_text(json.dumps({"type": "error", "message": "description required"}))
+            return
+
+        proj_agent: ProjectAgent = _agents["project"]  # type: ignore
+        async for event in proj_agent.build_stream(description, project_name=project_name):
+            await ws.send_text(json.dumps(event, default=str))
+
+        await ws.send_text(json.dumps({"type": "build_complete"}))
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.exception("Build WS error")
+        try:
+            await ws.send_text(json.dumps({"type": "error", "message": str(exc)}))
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------------
+# Live terminal WebSocket — stream shell output in real-time
+# ------------------------------------------------------------------
+@app.websocket("/ws/terminal")
+async def websocket_terminal(ws: WebSocket):
+    """
+    Interactive terminal streamed over WebSocket.
+    Client sends: {"cmd": "ls -la", "cwd": "my_project"}
+    Server streams stdout/stderr lines as they appear.
+    """
+    await ws.accept()
+    try:
+        while True:
+            raw  = await ws.receive_text()
+            data = json.loads(raw)
+            cmd  = data.get("cmd", "").strip()
+            cwd  = data.get("cwd", ".")
+            if not cmd:
+                continue
+
+            from core.tools import _safe_path
+            work_dir = _safe_path(cwd)
+
+            await ws.send_text(json.dumps({"type": "cmd", "text": f"$ {cmd}"}))
+            try:
+                proc = await asyncio.create_subprocess_shell(
+                    cmd,
+                    cwd=str(work_dir),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                async for line in proc.stdout:
+                    await ws.send_text(json.dumps({"type": "output", "text": line.decode(errors="replace").rstrip()}))
+                await proc.wait()
+                await ws.send_text(json.dumps({"type": "exit", "code": proc.returncode}))
+            except Exception as exc:
+                await ws.send_text(json.dumps({"type": "error", "text": str(exc)}))
+    except WebSocketDisconnect:
+        pass
+
+
+# ------------------------------------------------------------------
+# File upload into chat (multi-part — returns text content for vision/analysis)
+# ------------------------------------------------------------------
+@app.post("/api/upload/chat")
+async def upload_for_chat(file: UploadFile = File(...)):
+    """Accept a file upload and return its content ready for chat context."""
+    raw = await file.read()
+    ext = Path(file.filename or "").suffix.lower()
+
+    if ext in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+        b64 = base64.b64encode(raw).decode("utf-8")
+        return {"type": "image", "filename": file.filename, "b64": b64, "size": len(raw)}
+
+    if ext in (".py", ".js", ".ts", ".html", ".css", ".json", ".yaml", ".yml",
+               ".md", ".txt", ".sh", ".rs", ".go", ".c", ".cpp", ".java"):
+        text = raw.decode(errors="replace")
+        return {"type": "text", "filename": file.filename, "content": text[:50000], "size": len(text)}
+
+    # Try to decode anything else as text
+    try:
+        text = raw.decode(errors="replace")
+        return {"type": "text", "filename": file.filename, "content": text[:50000]}
+    except Exception:
+        b64 = base64.b64encode(raw).decode("utf-8")
+        return {"type": "binary", "filename": file.filename, "b64": b64, "size": len(raw)}
 
 
 # ------------------------------------------------------------------

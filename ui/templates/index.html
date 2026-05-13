@@ -17,10 +17,12 @@
       <span class="status-label" id="statusLabel">Connecting…</span>
     </div>
     <div class="header-right">
-      <button class="btn-icon" id="btnOpenChat" title="Open Chat">💬</button>
-      <button class="btn-icon" id="btnOpenVideo" title="Live Camera">📷</button>
-      <button class="btn-icon" id="btnOpenSettings" title="Settings / Model">⚙</button>
-      <button class="btn-icon" id="btnTheme" title="Toggle Theme">🌙</button>
+      <button class="btn-icon" id="btnOpenChat"      title="Open Chat">💬</button>
+      <button class="btn-icon" id="btnOpenVideo"     title="Live Camera">📷</button>
+      <button class="btn-icon" id="btnOpenWorkspace" title="Workspace">📁</button>
+      <button class="btn-icon" id="btnOpenTerminal"  title="Terminal">⌨</button>
+      <button class="btn-icon" id="btnOpenSettings"  title="Settings / Model">⚙</button>
+      <button class="btn-icon" id="btnTheme"         title="Toggle Theme">🌙</button>
     </div>
   </header>
 
@@ -35,6 +37,7 @@
         <div class="agent-chip reasoning">Reasoning</div>
         <div class="agent-chip ml">ML</div>
         <div class="agent-chip vision">Vision</div>
+        <div class="agent-chip project">Project</div>
       </div>
     </section>
 
@@ -54,6 +57,71 @@
       <div class="stat-row"><span>TTS</span><strong>Edge-TTS / pyttsx3</strong></div>
     </section>
   </main>
+</div>
+
+<!-- ═══════════════════════ WORKSPACE POPUP ══════════════════════════════ -->
+<div id="workspacePopup" class="popup hidden workspace-popup">
+  <div class="popup-header" id="workspacePopupHeader">
+    <span class="popup-title">📁 Workspace</span>
+    <div class="popup-controls">
+      <button class="btn-sm" id="btnWorkspaceRefresh">↻</button>
+      <button class="btn-icon sm" id="btnCloseWorkspace">✕</button>
+    </div>
+  </div>
+
+  <!-- Build panel -->
+  <div class="build-panel">
+    <h4>⚡ Build a Project</h4>
+    <textarea id="buildDesc" placeholder="Describe the project to build… e.g. 'Build a FastAPI REST API with SQLite and JWT auth'" rows="2"></textarea>
+    <div class="build-row">
+      <input id="buildName" type="text" placeholder="project-name (optional)" />
+      <button class="btn-sm accent" id="btnBuild">▶ Build</button>
+    </div>
+    <div id="buildLog" class="build-log hidden"></div>
+  </div>
+
+  <!-- File tree -->
+  <div class="workspace-tree-header">
+    <span>Files</span>
+    <label class="btn-sm upload-label">
+      ⬆ Upload
+      <input type="file" id="wsUploadInput" style="display:none" multiple />
+    </label>
+  </div>
+  <div class="workspace-tree" id="workspaceTree"></div>
+
+  <!-- File viewer -->
+  <div id="fileViewer" class="file-viewer hidden">
+    <div class="file-viewer-header">
+      <span id="fileViewerPath"></span>
+      <div style="display:flex;gap:6px">
+        <button class="btn-sm" id="btnCopyFile">Copy</button>
+        <button class="btn-sm" id="btnSendFileToChat">→ Chat</button>
+        <button class="btn-sm danger" id="btnCloseFileViewer">✕</button>
+      </div>
+    </div>
+    <pre id="fileViewerContent" class="file-content"></pre>
+  </div>
+
+  <!-- Project list -->
+  <div class="project-list" id="projectList"></div>
+</div>
+
+<!-- ═══════════════════════ TERMINAL POPUP ════════════════════════════════ -->
+<div id="terminalPopup" class="popup hidden terminal-popup">
+  <div class="popup-header" id="terminalPopupHeader">
+    <span class="popup-title">⌨ Terminal</span>
+    <div class="popup-controls">
+      <select id="termCwd" class="model-select" style="width:120px;font-size:11px"></select>
+      <button class="btn-sm danger" id="btnClearTerm">Clear</button>
+      <button class="btn-icon sm" id="btnCloseTerminal">✕</button>
+    </div>
+  </div>
+  <div class="terminal-output" id="termOutput"></div>
+  <div class="terminal-input-row">
+    <span class="term-prompt">$</span>
+    <input id="termInput" type="text" class="term-input" placeholder="enter command…" autocomplete="off" spellcheck="false" />
+  </div>
 </div>
 
 <!-- ═══════════════════════ SETTINGS / MODEL POPUP ═══════════════════════ -->
@@ -100,6 +168,7 @@
         <option value="reasoning">🧠 Reasoning</option>
         <option value="ml">📊 ML</option>
         <option value="vision">👁 Vision</option>
+        <option value="project">🏗 Project</option>
       </select>
       <button class="btn-icon sm" id="btnMinimize" title="Minimize">─</button>
       <button class="btn-icon sm" id="btnCloseChat" title="Close">✕</button>
@@ -114,12 +183,18 @@
     <button class="btn-sm danger" id="btnClearSnapshot">✕ Remove</button>
   </div>
 
+  <!-- Drag-to-upload drop zone -->
+  <div id="dropZone" class="drop-zone hidden">Drop file here to attach</div>
+
   <div class="chat-input-area">
     <!-- Mode tabs -->
     <div class="mode-tabs">
       <button class="mode-tab active" data-mode="text" title="Text">T</button>
       <button class="mode-tab" data-mode="voice" title="Voice">🎙</button>
       <button class="mode-tab" data-mode="video" title="Video">📷</button>
+      <label class="mode-tab" title="Attach file" style="cursor:pointer">
+        📎<input type="file" id="chatFileInput" style="display:none" accept="image/*,.py,.js,.ts,.md,.txt,.json,.yaml,.sh,.html,.css" />
+      </label>
     </div>
 
     <!-- Text mode -->

@@ -70,6 +70,7 @@ MAX_REASONING_TOKENS: int = int(os.getenv("MAX_REASONING_TOKENS", "8000"))
 DATA_DIR: Path = BASE_DIR / "data"
 LOG_DIR: Path = BASE_DIR / "logs"
 CODE_OUTPUT_DIR: Path = BASE_DIR / "data" / "code_output"
+WORKSPACE_DIR: Path = Path(os.getenv("WORKSPACE_DIR", str(BASE_DIR / "workspace")))
 
-for _d in (DATA_DIR, LOG_DIR, CODE_OUTPUT_DIR, SNAPSHOT_DIR):
+for _d in (DATA_DIR, LOG_DIR, CODE_OUTPUT_DIR, SNAPSHOT_DIR, WORKSPACE_DIR):
     _d.mkdir(parents=True, exist_ok=True)
