@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Multi-Agent Admin</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════ MAIN DASHBOARD ═══════════════════════════ -->
+<div id="dashboard">
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">⬡ AI Admin</div>
+      <span class="status-dot" id="statusDot"></span>
+      <span class="status-label" id="statusLabel">Connecting…</span>
+    </div>
+    <div class="header-right">
+      <button class="btn-icon" id="btnOpenChat" title="Open Chat">💬</button>
+      <button class="btn-icon" id="btnOpenVideo" title="Live Camera">📷</button>
+      <button class="btn-icon" id="btnTheme" title="Toggle Theme">🌙</button>
+    </div>
+  </header>
+
+  <main class="dashboard-grid">
+    <!-- Agent cards -->
+    <section class="card agents-card">
+      <h3>Active Agents</h3>
+      <div class="agent-list" id="agentList">
+        <div class="agent-chip admin">Admin</div>
+        <div class="agent-chip code">Code</div>
+        <div class="agent-chip research">Research</div>
+        <div class="agent-chip reasoning">Reasoning</div>
+        <div class="agent-chip ml">ML</div>
+        <div class="agent-chip vision">Vision</div>
+      </div>
+    </section>
+
+    <!-- Task log -->
+    <section class="card tasks-card">
+      <h3>Task Log <button class="btn-sm" id="btnRefreshTasks">↻</button></h3>
+      <div class="task-log" id="taskLog"></div>
+    </section>
+
+    <!-- Quick stats -->
+    <section class="card stats-card">
+      <h3>System</h3>
+      <div class="stat-row"><span>Platform</span><strong>WSL-2 Linux</strong></div>
+      <div class="stat-row"><span>LLM</span><strong>Claude Opus 4.7</strong></div>
+      <div class="stat-row"><span>STT</span><strong>Whisper</strong></div>
+      <div class="stat-row"><span>TTS</span><strong>Edge-TTS</strong></div>
+      <div class="stat-row"><span>Vision</span><strong>OpenCV + Claude</strong></div>
+    </section>
+  </main>
+</div>
+
+<!-- ═══════════════════════════ CHAT POPUP ═══════════════════════════════ -->
+<div id="chatPopup" class="popup hidden">
+  <div class="popup-header" id="chatPopupHeader">
+    <span class="popup-title">AI Multi-Agent Chat</span>
+    <div class="popup-controls">
+      <select id="agentSelect" title="Agent">
+        <option value="auto">🤖 Auto</option>
+        <option value="admin">🔧 Admin</option>
+        <option value="code">💻 Code</option>
+        <option value="research">🔍 Research</option>
+        <option value="reasoning">🧠 Reasoning</option>
+        <option value="ml">📊 ML</option>
+        <option value="vision">👁 Vision</option>
+      </select>
+      <button class="btn-icon sm" id="btnMinimize" title="Minimize">─</button>
+      <button class="btn-icon sm" id="btnCloseChat" title="Close">✕</button>
+    </div>
+  </div>
+
+  <div class="chat-messages" id="chatMessages"></div>
+
+  <!-- Snapshot preview area -->
+  <div id="snapshotPreview" class="snapshot-preview hidden">
+    <img id="snapshotImg" src="" alt="snapshot" />
+    <button class="btn-sm danger" id="btnClearSnapshot">✕ Remove</button>
+  </div>
+
+  <div class="chat-input-area">
+    <!-- Mode tabs -->
+    <div class="mode-tabs">
+      <button class="mode-tab active" data-mode="text" title="Text">T</button>
+      <button class="mode-tab" data-mode="voice" title="Voice">🎙</button>
+      <button class="mode-tab" data-mode="video" title="Video">📷</button>
+    </div>
+
+    <!-- Text mode -->
+    <div id="textMode" class="input-mode">
+      <textarea id="textInput" placeholder="Ask anything… (Enter to send, Shift+Enter for newline)" rows="2"></textarea>
+      <button class="btn-send" id="btnSend">➤</button>
+    </div>
+
+    <!-- Voice mode -->
+    <div id="voiceMode" class="input-mode hidden">
+      <div class="voice-ui">
+        <button class="btn-mic" id="btnMic" title="Hold to record">🎙</button>
+        <span class="voice-status" id="voiceStatus">Tap to record</span>
+        <div class="waveform" id="waveform">
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          <div class="bar"></div><div class="bar"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Video/Snapshot mode -->
+    <div id="videoMode" class="input-mode hidden">
+      <div class="video-ui">
+        <video id="localVideo" autoplay muted playsinline></video>
+        <div class="video-controls">
+          <button class="btn-sm" id="btnStartCam">▶ Start Cam</button>
+          <button class="btn-sm" id="btnSnap">📸 Snapshot</button>
+          <button class="btn-sm danger" id="btnStopCam">■ Stop</button>
+        </div>
+        <textarea id="snapshotPrompt" placeholder="Ask about snapshot…" rows="1"></textarea>
+        <button class="btn-send" id="btnSendSnap">➤</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════ VIDEO POPUP ══════════════════════════════ -->
+<div id="videoPopup" class="popup hidden video-popup">
+  <div class="popup-header" id="videoPopupHeader">
+    <span class="popup-title">📷 Live Camera Feed</span>
+    <div class="popup-controls">
+      <button class="btn-icon sm" id="btnCloseVideo">✕</button>
+    </div>
+  </div>
+  <div class="video-feed-container">
+    <video id="liveCamFeed" autoplay muted playsinline></video>
+    <canvas id="snapshotCanvas" style="display:none"></canvas>
+    <div class="video-overlay" id="videoOverlay"></div>
+  </div>
+  <div class="video-actions">
+    <button class="btn-sm" id="btnLiveSnap">📸 Snapshot + Analyze</button>
+    <input id="liveSnapPrompt" type="text" placeholder="Analysis prompt…" />
+  </div>
+</div>
+
+<!-- Floating launch button -->
+<button class="fab" id="fabBtn" title="Open AI Chat">💬</button>
+
+<script src="/static/js/main.js"></script>
+</body>
+</html>
